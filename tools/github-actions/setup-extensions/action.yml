@@ -14,12 +14,12 @@
 # limitations under the License.
 #
 name: setup-extensions
-description: Install the unpublished Agentic Spring AI extension artifacts required by this repository
+description: Install the unpublished Agentic AI extension artifacts required by this repository
 inputs:
   ref:
-    description: Agentic Spring AI Extensions git ref
+    description: Agentic AI Extensions git ref
     required: false
-    default: 77718562c9b23b417407617a814c1fb3719aa87d
+    default: 8f311b8caa584cd415ea338617a79499725f95f0
 runs:
   using: composite
   steps:
@@ -28,12 +28,12 @@ runs:
       run: |
         ./mvnw -B \
           -pl :agentic-spring-ai-bom,:agentic-spring-ai-graph-core,:agentic-spring-ai-agent-framework,:agentic-spring-ai-studio,:agentic-spring-ai-starter-builtin-nodes \
-          -am -DskipTests install
+          -am -Dmaven.test.skip=true install
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       with:
         repository: agentic-spring-ai/agentic-spring-ai-extensions
         ref: ${{ inputs.ref }}
-        path: target/agentic-spring-ai-extensions
+        path: .ci/agentic-spring-ai-extensions
     - name: Install required extension artifacts
       shell: bash
       run: |
@@ -51,6 +51,6 @@ runs:
           :agentic-spring-ai-graph-node-network
         )
         extensions_module_list=$(IFS=,; echo "${extensions_modules[*]}")
-        mvn -B -DskipTests \
-          -f target/agentic-spring-ai-extensions/pom.xml \
+        mvn -B -Dmaven.test.skip=true \
+          -f .ci/agentic-spring-ai-extensions/pom.xml \
           -pl "$extensions_module_list" -am install
