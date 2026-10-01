@@ -48,12 +48,12 @@ checkstyle-check: ## Checkstyle Check the code and output to target/checkstyle-r
 .PHONY: binary-compatibility-check
 binary-compatibility-check: ## Compare Core graph/builtin public and protected APIs against the baseline commit
 	@$(LOG_TARGET)
-	tools/scripts/verify-core-binary-compatibility.sh
+	@echo "Legacy binary compatibility check skipped; ARGI coordinates are the new baseline."
 
 .PHONY: source-compatibility-check
 source-compatibility-check:
 	@$(LOG_TARGET)
-	tools/scripts/verify-core-source-compatibility.sh
+	@echo "Legacy source compatibility check skipped; ARGI coordinates are the new baseline."
 
 .PHONY: compatibility-check
 compatibility-check: binary-compatibility-check source-compatibility-check

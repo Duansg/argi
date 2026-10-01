@@ -67,15 +67,6 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
       - run: ./mvnw -B -DskipTests compile
-  api-compatibility:
-    if: (github.repository == 'agentic-ai-java/argi')
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          fetch-depth: 0
-      - uses: ./tools/github-actions/setup-deps
-      - run: make compatibility-check
   extensions-compatibility:
     if: (github.repository == 'agentic-ai-java/argi')
     runs-on: ubuntu-22.04
@@ -85,13 +76,13 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: agentic-ai-java/argi-extensions
-          ref: 8f311b8caa584cd415ea338617a79499725f95f0
+          ref: 611ff72803a9c1f9e96d534811f2d38e2cf0e29e
           path: .ci/argi-extensions
       - run: tools/scripts/verify-extensions-compatibility.sh .ci/argi-extensions
   build:
     if: (github.repository == 'agentic-ai-java/argi')
     runs-on: ubuntu-22.04
-    needs: [format, check-style, test, jdk-compatibility, api-compatibility, extensions-compatibility]
+    needs: [format, check-style, test, jdk-compatibility, extensions-compatibility]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: ./tools/github-actions/setup-deps

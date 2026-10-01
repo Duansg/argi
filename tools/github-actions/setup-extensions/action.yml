@@ -19,7 +19,7 @@ inputs:
   ref:
     description: ARGI Extensions git ref
     required: false
-    default: 8f311b8caa584cd415ea338617a79499725f95f0
+    default: 611ff72803a9c1f9e96d534811f2d38e2cf0e29e
 runs:
   using: composite
   steps:
