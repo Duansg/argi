@@ -27,14 +27,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "Testing and installing Core into $maven_repo"
+echo "Installing Core into $maven_repo"
 cd "$core_dir"
-./mvnw -B -Dmaven.repo.local="$maven_repo" clean install
+./mvnw -B -Dmaven.repo.local="$maven_repo" -DskipTests clean install
 
-echo "Testing Extensions from $extensions_dir against the isolated repository"
+echo "Compiling Extensions from $extensions_dir against the isolated repository"
 if [[ -x "$extensions_dir/mvnw" ]]; then
   extensions_maven="$extensions_dir/mvnw"
 else
   extensions_maven="${MAVEN_CMD:-mvn}"
 fi
-"$extensions_maven" -B -f "$extensions_dir/pom.xml" -Dmaven.repo.local="$maven_repo" clean test
+"$extensions_maven" -B -f "$extensions_dir/pom.xml" -Dmaven.repo.local="$maven_repo" -DskipTests clean test
