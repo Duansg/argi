@@ -520,8 +520,7 @@ export function Thread() {
                     }}
                   >
                     <span className="text-xl font-semibold tracking-tight">
-                      <span className="text-green-600">ARGI</span> Agent
-                      Chat
+                      <span className="text-green-600">ARGI</span> Agent Chat
                     </span>
                   </motion.button>
                 )}
@@ -669,9 +668,7 @@ export function Thread() {
                   {!chatStarted && (
                     <div className="flex items-center gap-3">
                       <h1 className="text-2xl font-semibold tracking-tight">
-                        <span className="text-green-600 italic">
-                          ARGI
-                        </span>{" "}
+                        <span className="text-green-600 italic">ARGI</span>{" "}
                         Agent Chat
                       </h1>
                     </div>
