@@ -124,18 +124,11 @@ public class ScheduledAgentTask {
 	 */
 	public void execute(RunnableConfig runnableConfig, Map<String, Object> inputs) {
 		try {
-			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_STARTED);
-			OverAllState initialState = createInitialState(inputs);
-			if (runnableConfig == null) {
-				String threadId = String.format("%s-%d", taskId, System.currentTimeMillis());
-				runnableConfig = RunnableConfig.builder().threadId(threadId).build();
-			}
-			Optional<OverAllState> result = graph.invoke(initialState, runnableConfig);
-			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_COMPLETED, result.orElse(null));
+			executeGraphAttempt(runnableConfig, inputs);
 		}
 		catch (Exception e) {
-			log.error("Graph execution failed", e);
-			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_FAILED, e);
+			// Public manual execution historically reports failures through listeners
+			// without throwing to callers.
 		}
 	}
 
@@ -146,7 +139,7 @@ public class ScheduledAgentTask {
 		int attempt = 0;
 		while (attempt <= config.getMaxRetries()) {
 			try {
-				execute(config.getRunnableConfig(), config.getInputs());
+				executeGraphAttempt(config.getRunnableConfig(), config.getInputs());
 				return;
 			}
 			catch (Exception e) {
@@ -165,6 +158,25 @@ public class ScheduledAgentTask {
 					break;
 				}
 			}
+		}
+	}
+
+	private Optional<OverAllState> executeGraphAttempt(RunnableConfig runnableConfig, Map<String, Object> inputs) {
+		try {
+			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_STARTED);
+			OverAllState initialState = createInitialState(inputs);
+			if (runnableConfig == null) {
+				String threadId = String.format("%s-%d", taskId, System.currentTimeMillis());
+				runnableConfig = RunnableConfig.builder().threadId(threadId).build();
+			}
+			Optional<OverAllState> result = graph.invoke(initialState, runnableConfig);
+			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_COMPLETED, result.orElse(null));
+			return result;
+		}
+		catch (Exception e) {
+			log.error("Graph execution failed", e);
+			notifyListeners(ScheduleLifecycleListener.ScheduleEvent.EXECUTION_FAILED, e);
+			throw e;
 		}
 	}
 
