@@ -78,7 +78,7 @@ class ScheduledAgentTaskLifecycleTest {
 		assertEquals(2, attempts.get());
 		assertEquals(1, count(events, EXECUTION_FAILED));
 		assertEquals(1, count(events, EXECUTION_COMPLETED));
-		assertTrue(manager.getTask(task.getTaskId()).isPresent());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
 	}
 
 	@Test
@@ -98,7 +98,7 @@ class ScheduledAgentTaskLifecycleTest {
 
 		assertEquals(3, attempts.get());
 		assertEquals(3, count(events, EXECUTION_FAILED));
-		assertFalse(manager.getTask(task.getTaskId()).isEmpty());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
 	}
 
 	@Test
@@ -180,7 +180,66 @@ class ScheduledAgentTaskLifecycleTest {
 		assertFalse(worker.isAlive());
 		assertEquals(1, attempts.get());
 		assertEquals(null, uncaught.get());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+	}
+
+	@Test
+	void oneTimeTaskUnregistersExactlyOnceAfterSuccessfulExecution() throws Exception {
+		registerRecordingManager();
+		AtomicInteger attempts = new AtomicInteger();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(attempts, 0),
+				ScheduleConfig.builder().initialDelay(0).build()).start();
+
+		manager.scheduler.runNext();
+
+		assertEquals(1, attempts.get());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+		task.stop();
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void oneTimeTaskUnregistersExactlyOnceAfterRetriesAreExhausted() throws Exception {
+		registerRecordingManager();
+		AtomicInteger attempts = new AtomicInteger();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(attempts, Integer.MAX_VALUE),
+				ScheduleConfig.builder().initialDelay(0).maxRetries(1).retryDelay(Duration.ZERO).build()).start();
+
+		manager.scheduler.runNext();
+
+		assertEquals(2, attempts.get());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+		task.stop();
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void periodicTaskRemainsRegisteredAfterOneExecution() throws Exception {
+		registerRecordingManager();
+		AtomicInteger attempts = new AtomicInteger();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(attempts, 0),
+				ScheduleConfig.builder().fixedDelay(1000).initialDelay(0).build()).start();
+
+		manager.scheduler.runNext();
+
+		assertEquals(1, attempts.get());
 		assertTrue(manager.getTask(task.getTaskId()).isPresent());
+		assertEquals(0, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void oneTimeTaskUnregistersWhenSchedulerRunsBeforeStartReturns() throws Exception {
+		registerRecordingManager();
+		manager.scheduler.runOneTimeTasksImmediately();
+		AtomicInteger attempts = new AtomicInteger();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(attempts, 0),
+				ScheduleConfig.builder().initialDelay(0).build()).start();
+
+		assertEquals(1, attempts.get());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
 	}
 
 	private void registerRecordingManager() {
@@ -223,6 +282,8 @@ class ScheduledAgentTaskLifecycleTest {
 
 		private final Map<String, ScheduledAgentTask> tasks = new HashMap<>();
 
+		private final Map<String, AtomicInteger> unregisterCounts = new HashMap<>();
+
 		private final AtomicInteger sequence = new AtomicInteger();
 
 		@Override
@@ -234,6 +295,7 @@ class ScheduledAgentTaskLifecycleTest {
 
 		@Override
 		public boolean unregisterTask(String taskId) {
+			unregisterCounts.computeIfAbsent(taskId, key -> new AtomicInteger()).incrementAndGet();
 			return tasks.remove(taskId) != null;
 		}
 
@@ -267,11 +329,18 @@ class ScheduledAgentTaskLifecycleTest {
 			tasks.clear();
 		}
 
+		int unregisterCount(String taskId) {
+			AtomicInteger count = unregisterCounts.get(taskId);
+			return count != null ? count.get() : 0;
+		}
+
 	}
 
 	private static final class RecordingTaskScheduler implements TaskScheduler {
 
 		private final Queue<Runnable> scheduledTasks = new ArrayDeque<>();
+
+		private boolean runOneTimeTasksImmediately;
 
 		@Override
 		public ScheduledFuture<?> schedule(Runnable task, Trigger trigger) {
@@ -281,6 +350,10 @@ class ScheduledAgentTaskLifecycleTest {
 
 		@Override
 		public ScheduledFuture<?> schedule(Runnable task, Instant startTime) {
+			if (runOneTimeTasksImmediately) {
+				task.run();
+				return new TestScheduledFuture();
+			}
 			scheduledTasks.add(task);
 			return new TestScheduledFuture();
 		}
@@ -317,6 +390,10 @@ class ScheduledAgentTaskLifecycleTest {
 
 		Runnable removeNext() {
 			return scheduledTasks.poll();
+		}
+
+		void runOneTimeTasksImmediately() {
+			runOneTimeTasksImmediately = true;
 		}
 
 	}

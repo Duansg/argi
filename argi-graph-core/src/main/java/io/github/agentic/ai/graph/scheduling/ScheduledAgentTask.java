@@ -20,6 +20,7 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.agentic.ai.graph.CompiledGraph;
 import io.github.agentic.ai.graph.OverAllState;
@@ -51,6 +52,8 @@ public class ScheduledAgentTask {
 	private volatile boolean started = false;
 
 	private volatile boolean stopped = false;
+
+	private final AtomicBoolean unregistered = new AtomicBoolean(false);
 
 	private final String taskId;
 
@@ -111,7 +114,7 @@ public class ScheduledAgentTask {
 		stopped = true;
 
 		// Unregister from active manager
-		ScheduledAgentManagerFactory.getInstance().getManager().unregisterTask(taskId);
+		unregisterTask();
 		log.debug("Stopped and unregistered ScheduledAgentTask with ID: {}", taskId);
 
 		notifyListeners(ScheduleLifecycleListener.ScheduleEvent.STOPPED);
@@ -136,27 +139,34 @@ public class ScheduledAgentTask {
 	 * Execute the graph with retry logic
 	 */
 	private void executeGraph() {
-		int attempt = 0;
-		while (attempt <= config.getMaxRetries()) {
-			try {
-				executeGraphAttempt(config.getRunnableConfig(), config.getInputs());
-				return;
-			}
-			catch (Exception e) {
-				log.warn("Graph execution failed (attempt {}): {}", attempt + 1, e.getMessage());
-				if (attempt < config.getMaxRetries() && config.getRetryPredicate().apply(e)) {
-					attempt++;
-					try {
-						Thread.sleep(config.getRetryDelay().toMillis());
+		try {
+			int attempt = 0;
+			while (attempt <= config.getMaxRetries()) {
+				try {
+					executeGraphAttempt(config.getRunnableConfig(), config.getInputs());
+					return;
+				}
+				catch (Exception e) {
+					log.warn("Graph execution failed (attempt {}): {}", attempt + 1, e.getMessage());
+					if (attempt < config.getMaxRetries() && config.getRetryPredicate().apply(e)) {
+						attempt++;
+						try {
+							Thread.sleep(config.getRetryDelay().toMillis());
+						}
+						catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							break;
+						}
 					}
-					catch (InterruptedException ie) {
-						Thread.currentThread().interrupt();
+					else {
 						break;
 					}
 				}
-				else {
-					break;
-				}
+			}
+		}
+		finally {
+			if (config.getMode() == ScheduleConfig.ScheduleMode.ONE_TIME) {
+				unregisterTask();
 			}
 		}
 	}
@@ -200,6 +210,12 @@ public class ScheduledAgentTask {
 
 	private void notifyListeners(ScheduleLifecycleListener.ScheduleEvent event) {
 		notifyListeners(event, null);
+	}
+
+	private void unregisterTask() {
+		if (unregistered.compareAndSet(false, true)) {
+			ScheduledAgentManagerFactory.getInstance().getManager().unregisterTask(taskId);
+		}
 	}
 
 	// Getters for monitoring
