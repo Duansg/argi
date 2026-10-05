@@ -15,6 +15,7 @@
  */
 package io.github.agentic.ai.graph.agent.hook.toolcalllimit;
 
+import io.github.agentic.ai.graph.KeyStrategy;
 import io.github.agentic.ai.graph.OverAllState;
 import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.agent.hook.HookPosition;
@@ -23,6 +24,7 @@ import io.github.agentic.ai.graph.agent.hook.JumpTo;
 import io.github.agentic.ai.graph.agent.hook.ModelHook;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.ToolResponseMessage;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,13 +36,17 @@ import java.util.concurrent.CompletableFuture;
  * Hook that tracks and limits tool call counts.
  *
  * This hook monitors the number of tool calls made during agent execution
- * and can terminate the agent when specified limits are reached.
+ * and can terminate the agent when specified limits are reached. A batch that
+ * would exceed a limit is rejected in full before any of its tools execute.
+ * Thread counts are checkpointed when an explicit thread ID is provided;
+ * run counts remain invocation-local.
  */
 @HookPositions({HookPosition.BEFORE_MODEL, HookPosition.AFTER_MODEL})
 public class ToolCallLimitHook extends ModelHook {
 
 	private static final String THREAD_COUNT_KEY_PREFIX = "__tool_call_limit_thread_count__";
 	private static final String RUN_COUNT_KEY_PREFIX = "__tool_call_limit_run_count__";
+	private static final String PENDING_ERROR_KEY_PREFIX = "__tool_call_limit_pending_error__";
 
 	private final String toolName; // null means track all tools
 	private final Integer threadLimit;
@@ -70,11 +76,12 @@ public class ToolCallLimitHook extends ModelHook {
 
 	@Override
 	public CompletableFuture<Map<String, Object>> beforeModel(OverAllState state, RunnableConfig config) {
-		// Read current counts from context
-		int threadCount = config.context().containsKey(getThreadCountKey())
-				? (int) config.context().get(getThreadCountKey()) : 0;
-		int runCount = config.context().containsKey(getRunCountKey())
-				? (int) config.context().get(getRunCountKey()) : 0;
+		Object pendingError = config.context().remove(getPendingErrorKey());
+		if (pendingError instanceof ToolCallLimitExceededException exception) {
+			throw exception;
+		}
+		int threadCount = threadCallCount(state, config);
+		int runCount = countFrom(config.context().get(getRunCountKey()));
 
 		boolean threadLimitExceeded = threadLimit != null && threadCount >= threadLimit;
 		boolean runLimitExceeded = runLimit != null && runCount >= runLimit;
@@ -136,20 +143,62 @@ public class ToolCallLimitHook extends ModelHook {
 			}
 		}
 
-		// Increment counters if there are new tool calls
 		if (newCalls > 0) {
-			// Read current counts from context
-			int threadCount = config.context().containsKey(getThreadCountKey())
-					? (int) config.context().get(getThreadCountKey()) : 0;
-			int runCount = config.context().containsKey(getRunCountKey())
-					? (int) config.context().get(getRunCountKey()) : 0;
+			int threadCount = threadCallCount(state, config);
+			int runCount = countFrom(config.context().get(getRunCountKey()));
+			if ((threadLimit != null && (long) threadCount + newCalls > threadLimit)
+					|| (runLimit != null && (long) runCount + newCalls > runLimit)) {
+				return rejectBatch((AssistantMessage) lastMessage, config, threadCount + newCalls, runCount + newCalls);
+			}
 
-			// Update context with incremented counts
-			config.context().put(getThreadCountKey(), threadCount + newCalls);
 			config.context().put(getRunCountKey(), runCount + newCalls);
+			if (threadLimit != null) {
+				if (config.threadId().isPresent()) {
+					return CompletableFuture.completedFuture(Map.of(getThreadCountKey(), threadCount + newCalls));
+				}
+				config.context().put(getThreadCountKey(), threadCount + newCalls);
+			}
 		}
 
 		return CompletableFuture.completedFuture(Map.of());
+	}
+
+	private CompletableFuture<Map<String, Object>> rejectBatch(AssistantMessage message, RunnableConfig config,
+			int threadCount, int runCount) {
+		String reason = buildLimitExceededMessage(threadCount, runCount, threadLimit, runLimit, toolName);
+		List<ToolResponseMessage.ToolResponse> responses = message.getToolCalls().stream()
+				.map(call -> new ToolResponseMessage.ToolResponse(call.id(), call.name(), reason)).toList();
+		List<Message> messages = new ArrayList<>();
+		messages.add(ToolResponseMessage.builder().responses(responses).build());
+		Map<String, Object> updates = new HashMap<>();
+		updates.put("messages", messages);
+		if (exitBehavior == ExitBehavior.ERROR) {
+			// Checkpoint paired responses before raising the error in the next before-model hook.
+			config.context().put(getPendingErrorKey(), new ToolCallLimitExceededException(
+					threadCount, runCount, threadLimit, runLimit, toolName));
+			updates.put("jump_to", JumpTo.model);
+		}
+		else {
+			messages.add(new AssistantMessage(reason));
+			updates.put("jump_to", JumpTo.end);
+		}
+		return CompletableFuture.completedFuture(updates);
+	}
+
+	private String getPendingErrorKey() {
+		return PENDING_ERROR_KEY_PREFIX + "_" + (toolName != null ? toolName : "__all__");
+	}
+
+	private int threadCallCount(OverAllState state, RunnableConfig config) {
+		if (threadLimit == null) {
+			return 0;
+		}
+		return countFrom(config.threadId().isPresent() ? state.value(getThreadCountKey()).orElse(0)
+				: config.context().get(getThreadCountKey()));
+	}
+
+	private int countFrom(Object value) {
+		return value instanceof Number number ? number.intValue() : 0;
 	}
 
 	private String buildLimitExceededMessage(int threadCount, int runCount,
@@ -177,7 +226,12 @@ public class ToolCallLimitHook extends ModelHook {
 		if (exitBehavior == ExitBehavior.END) {
 			return List.of(JumpTo.end);
 		}
-		return List.of();
+		return List.of(JumpTo.model);
+	}
+
+	@Override
+	public Map<String, KeyStrategy> getKeyStrategys() {
+		return threadLimit == null ? Map.of() : Map.of(getThreadCountKey(), KeyStrategy.REPLACE);
 	}
 
 	public enum ExitBehavior {
