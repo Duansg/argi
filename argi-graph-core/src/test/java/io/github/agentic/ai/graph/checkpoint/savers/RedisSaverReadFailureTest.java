@@ -36,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.redisson.api.RLock;
 import org.redisson.api.RMap;
 import org.redisson.api.RedissonClient;
+import org.redisson.client.RedisException;
 
 import static io.github.agentic.ai.graph.StateGraph.END;
 import static io.github.agentic.ai.graph.StateGraph.START;
@@ -73,6 +74,26 @@ class RedisSaverReadFailureTest {
 	}
 
 	@Test
+	void getTimeoutCleanupDoesNotMaskReadFailure() throws Exception {
+		RedisSaver saver = saverWithLock(lockThrowingOnOwnershipAfterTimeout());
+		RunnableConfig config = RunnableConfig.builder().threadId("contention-get-cleanup").build();
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class, () -> saver.get(config));
+
+		assertTrue(exception.getMessage().contains("Timed out acquiring Redis checkpoint read lock"));
+	}
+
+	@Test
+	void listTimeoutCleanupDoesNotMaskReadFailure() throws Exception {
+		RedisSaver saver = saverWithLock(lockThrowingOnOwnershipAfterTimeout());
+		RunnableConfig config = RunnableConfig.builder().threadId("contention-list-cleanup").build();
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class, () -> saver.list(config));
+
+		assertTrue(exception.getMessage().contains("Timed out acquiring Redis checkpoint read lock"));
+	}
+
+	@Test
 	void interruptedGetRestoresInterruptFlagAndThrows() throws Exception {
 		RedisSaver saver = saverWithLock(interruptedLock());
 		RunnableConfig config = RunnableConfig.builder().threadId("interrupted-get").build();
@@ -89,6 +110,28 @@ class RedisSaverReadFailureTest {
 
 		assertThrows(IllegalStateException.class, () -> saver.list(config));
 
+		assertTrue(Thread.currentThread().isInterrupted());
+	}
+
+	@Test
+	void interruptedGetCleanupDoesNotMaskReadFailureOrInterruptFlag() throws Exception {
+		RedisSaver saver = saverWithLock(lockThrowingOnOwnershipAfterInterrupt());
+		RunnableConfig config = RunnableConfig.builder().threadId("interrupted-get-cleanup").build();
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class, () -> saver.get(config));
+
+		assertTrue(exception.getCause() instanceof InterruptedException);
+		assertTrue(Thread.currentThread().isInterrupted());
+	}
+
+	@Test
+	void interruptedListCleanupDoesNotMaskReadFailureOrInterruptFlag() throws Exception {
+		RedisSaver saver = saverWithLock(lockThrowingOnOwnershipAfterInterrupt());
+		RunnableConfig config = RunnableConfig.builder().threadId("interrupted-list-cleanup").build();
+
+		IllegalStateException exception = assertThrows(IllegalStateException.class, () -> saver.list(config));
+
+		assertTrue(exception.getCause() instanceof InterruptedException);
 		assertTrue(Thread.currentThread().isInterrupted());
 	}
 
@@ -145,6 +188,20 @@ class RedisSaverReadFailureTest {
 		RLock lock = mock(RLock.class);
 		when(lock.tryLock(500, TimeUnit.MILLISECONDS)).thenThrow(new InterruptedException("interrupted"));
 		when(lock.isHeldByCurrentThread()).thenReturn(false);
+		return lock;
+	}
+
+	private static RLock lockThrowingOnOwnershipAfterTimeout() throws InterruptedException {
+		RLock lock = mock(RLock.class);
+		when(lock.tryLock(500, TimeUnit.MILLISECONDS)).thenReturn(false);
+		when(lock.isHeldByCurrentThread()).thenThrow(new RedisException("ownership query failed"));
+		return lock;
+	}
+
+	private static RLock lockThrowingOnOwnershipAfterInterrupt() throws InterruptedException {
+		RLock lock = mock(RLock.class);
+		when(lock.tryLock(500, TimeUnit.MILLISECONDS)).thenThrow(new InterruptedException("interrupted"));
+		when(lock.isHeldByCurrentThread()).thenThrow(new RedisException("ownership query failed"));
 		return lock;
 	}
 
