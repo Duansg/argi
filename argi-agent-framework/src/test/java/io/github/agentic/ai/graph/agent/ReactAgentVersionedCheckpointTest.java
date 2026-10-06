@@ -20,8 +20,10 @@ import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.StateGraph;
 import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
 import io.github.agentic.ai.graph.checkpoint.CheckpointSnapshot;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
 import io.github.agentic.ai.graph.checkpoint.savers.VersionedMemoryCheckpointSaver;
 
 import java.time.Duration;
@@ -110,6 +112,52 @@ class ReactAgentVersionedCheckpointTest {
 	}
 
 	@Test
+	void cancellationAfterScopeEntryBeforeAnyOwnedWriteDoesNotRewindVersionedCheckpoint() throws Exception {
+		try (Fixture fixture = new Fixture()) {
+			Checkpoint seed = Checkpoint.builder()
+				.state(Map.of("owner", "seed"))
+				.nodeId(StateGraph.START)
+				.nextNodeId(StateGraph.END)
+				.build();
+			fixture.saver.putIfVersion(fixture.config, seed, 0);
+			CheckpointSnapshot beforeSubscribe = fixture.saver.getVersioned(fixture.config);
+			int conditionalPutsBeforeSubscribe = fixture.saver.conditionalPuts.get();
+			CountDownLatch entered = new CountDownLatch(1);
+			CountDownLatch terminated = new CountDownLatch(1);
+
+			Disposable active = CheckpointExecutionQueue.serialize(fixture.saver, fixture.config,
+					() -> VersionedCheckpointScope.withScope(fixture.saver, fixture.config,
+							scope -> Flux.<NodeOutput>never()
+								.doOnSubscribe(subscription -> entered.countDown())
+								.doFinally(signal -> {
+									if (signal == reactor.core.publisher.SignalType.CANCEL) {
+										try {
+											scope.rewind(fixture.config);
+										}
+										catch (Exception ex) {
+											throw new AssertionError(ex);
+										}
+									}
+								})))
+				.doFinally(signal -> terminated.countDown())
+				.subscribe();
+			assertTrue(entered.await(10, TimeUnit.SECONDS), "scope-backed operation must start");
+			assertEquals(conditionalPutsBeforeSubscribe, fixture.saver.conditionalPuts.get(),
+					"entering the scope must not create an owned write");
+
+			active.dispose();
+			assertTrue(terminated.await(10, TimeUnit.SECONDS), "subscription must terminate after cancellation");
+
+			CheckpointSnapshot afterCancel = fixture.saver.getVersioned(fixture.config);
+			assertEquals(conditionalPutsBeforeSubscribe, fixture.saver.conditionalPuts.get(),
+					"cancellation with an entered scope but no owned writes must not rewind");
+			assertEquals(beforeSubscribe.revision(), afterCancel.revision());
+			assertEquals("seed", afterCancel.checkpoint().orElseThrow().getState().get("owner"));
+			assertEquals(StateGraph.END, afterCancel.checkpoint().orElseThrow().getNextNodeId());
+		}
+	}
+
+	@Test
 	void cancellationAfterOwnWriteRewindsWithVersionedScope() throws Exception {
 		try (Fixture fixture = new Fixture()) {
 			Disposable active = fixture.subscribe(TOOL_CANCEL);
@@ -164,8 +212,8 @@ class ReactAgentVersionedCheckpointTest {
 			List<NodeOutput> outputs = cold.collectList().block(Duration.ofSeconds(10));
 
 			assertNotNull(outputs);
-			assertTrue(fixture.saver.versionedReads.get() > readsAfterFirstSubscription,
-					"each cold subscription must create its own versioned scope");
+			assertEquals(readsAfterFirstSubscription + 1, fixture.saver.versionedReads.get(),
+					"each cold subscription must create exactly one fresh initial versioned scope read");
 			assertEquals(0, fixture.saver.plainPuts.get(), "the cancelled first subscription must not legacy-rewind");
 			assertEquals("external", fixture.saver.getVersioned(fixture.config)
 				.checkpoint()
