@@ -16,13 +16,21 @@
 package io.github.agentic.ai.graph.checkpoint;
 
 import io.github.agentic.ai.graph.RunnableConfig;
+import io.github.agentic.ai.graph.StateGraph;
+import io.github.agentic.ai.graph.serializer.StateSerializer;
+import io.github.agentic.ai.graph.serializer.check_point.CheckPointSerializer;
 
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 
 import reactor.core.publisher.Flux;
+
+import static io.github.agentic.ai.graph.StateGraph.END;
+import static io.github.agentic.ai.graph.StateGraph.START;
 
 /**
  * Per-subscription revision owner for a {@link VersionedCheckpointSaver} namespace.
@@ -35,6 +43,8 @@ public final class VersionedCheckpointScope {
 
 	private final String namespace;
 
+	private final CheckPointSerializer checkpointSerializer;
+
 	private CheckpointSnapshot currentSnapshot;
 
 	private final CheckpointSnapshot preTurnSnapshot;
@@ -43,18 +53,30 @@ public final class VersionedCheckpointScope {
 
 	private long lastOwnRevision;
 
-	private VersionedCheckpointScope(VersionedCheckpointSaver saver, RunnableConfig config) {
+	private CheckpointConflictException terminalConflict;
+
+	private VersionedCheckpointScope(VersionedCheckpointSaver saver, RunnableConfig config,
+			StateSerializer serializer) {
 		this.saver = Objects.requireNonNull(saver, "saver cannot be null");
 		this.namespace = saver.checkpointThreadId(Objects.requireNonNull(config, "config cannot be null"));
-		this.currentSnapshot = saver.getVersioned(config);
-		this.preTurnSnapshot = currentSnapshot;
+		this.checkpointSerializer = new CheckPointSerializer(
+				Objects.requireNonNull(serializer, "serializer cannot be null"));
+		CheckpointSnapshot initialSnapshot = cloneSnapshotUnchecked(saver.getVersioned(config));
+		this.currentSnapshot = initialSnapshot;
+		this.preTurnSnapshot = cloneSnapshotUnchecked(initialSnapshot);
 		this.lastOwnRevision = currentSnapshot.revision();
 	}
 
 	public static <T> Flux<T> withScope(VersionedCheckpointSaver saver, RunnableConfig config,
 			Function<VersionedCheckpointScope, Flux<T>> operation) {
+		return withScope(saver, config, StateGraph.DEFAULT_JACKSON_SERIALIZER, operation);
+	}
+
+	public static <T> Flux<T> withScope(VersionedCheckpointSaver saver, RunnableConfig config,
+			StateSerializer serializer, Function<VersionedCheckpointScope, Flux<T>> operation) {
 		Objects.requireNonNull(saver, "saver cannot be null");
 		Objects.requireNonNull(config, "config cannot be null");
+		Objects.requireNonNull(serializer, "serializer cannot be null");
 		Objects.requireNonNull(operation, "operation cannot be null");
 		return Flux.deferContextual(context -> {
 			ScopeKey key = new ScopeKey(saver, saver.checkpointThreadId(config));
@@ -63,7 +85,7 @@ public final class VersionedCheckpointScope {
 			if (existing != null) {
 				return Flux.defer(() -> operation.apply(existing));
 			}
-			VersionedCheckpointScope scope = new VersionedCheckpointScope(saver, config);
+			VersionedCheckpointScope scope = new VersionedCheckpointScope(saver, config, serializer);
 			Map<ScopeKey, VersionedCheckpointScope> scopes = new HashMap<>(inherited);
 			scopes.put(key, scope);
 			return Flux.defer(() -> operation.apply(scope)).contextWrite(current -> current.put(CONTEXT_KEY, scopes));
@@ -71,26 +93,28 @@ public final class VersionedCheckpointScope {
 	}
 
 	public synchronized CheckpointSnapshot snapshot() {
-		return currentSnapshot;
+		return cloneSnapshotUnchecked(currentSnapshot);
 	}
 
 	public synchronized CheckpointSnapshot snapshot(RunnableConfig config) throws Exception {
 		validateNamespace(config);
+		failIfTerminated();
 		if (config.checkPointId().isEmpty() || currentSnapshot.checkpoint()
 			.map(Checkpoint::getId)
 			.filter(config.checkPointId().get()::equals)
 			.isPresent()) {
-			return currentSnapshot;
+			return cloneSnapshot(currentSnapshot);
 		}
-		CheckpointSnapshot selected = saver.getVersioned(config);
+		CheckpointSnapshot selected = cloneSnapshot(saver.getVersioned(config));
 		if (selected.revision() != currentSnapshot.revision()) {
-			throw new CheckpointConflictException(namespace, currentSnapshot.revision(), selected.revision());
+			throw rememberConflict(new CheckpointConflictException(namespace, currentSnapshot.revision(),
+					selected.revision()));
 		}
-		return selected;
+		return cloneSnapshot(selected);
 	}
 
 	public synchronized CheckpointSnapshot preTurnSnapshot() {
-		return preTurnSnapshot;
+		return cloneSnapshotUnchecked(preTurnSnapshot);
 	}
 
 	public synchronized boolean hasOwnMutation() {
@@ -99,10 +123,18 @@ public final class VersionedCheckpointScope {
 
 	public synchronized RunnableConfig put(RunnableConfig config, Checkpoint checkpoint) throws Exception {
 		validateNamespace(config);
+		failIfTerminated();
+		Checkpoint ownedCheckpoint = cloneCheckpoint(checkpoint);
 		long expectedRevision = currentSnapshot.revision();
 		long nextRevision = nextRevision(expectedRevision);
-		RunnableConfig updated = saver.putIfVersion(config, checkpoint, expectedRevision);
-		currentSnapshot = new CheckpointSnapshot(java.util.Optional.of(checkpoint), nextRevision);
+		RunnableConfig updated;
+		try {
+			updated = saver.putIfVersion(config, ownedCheckpoint, expectedRevision);
+		}
+		catch (CheckpointConflictException ex) {
+			throw rememberConflict(ex);
+		}
+		currentSnapshot = new CheckpointSnapshot(Optional.of(ownedCheckpoint), nextRevision);
 		ownMutation = true;
 		lastOwnRevision = nextRevision;
 		return updated;
@@ -110,10 +142,17 @@ public final class VersionedCheckpointScope {
 
 	public synchronized BaseCheckpointSaver.Tag release(RunnableConfig config) throws Exception {
 		validateNamespace(config);
+		failIfTerminated();
 		long expectedRevision = currentSnapshot.revision();
 		long nextRevision = nextRevision(expectedRevision);
-		BaseCheckpointSaver.Tag tag = saver.releaseIfVersion(config, expectedRevision);
-		currentSnapshot = new CheckpointSnapshot(java.util.Optional.empty(), nextRevision);
+		BaseCheckpointSaver.Tag tag;
+		try {
+			tag = saver.releaseIfVersion(config, expectedRevision);
+		}
+		catch (CheckpointConflictException ex) {
+			throw rememberConflict(ex);
+		}
+		currentSnapshot = new CheckpointSnapshot(Optional.empty(), nextRevision);
 		ownMutation = true;
 		lastOwnRevision = nextRevision;
 		return tag;
@@ -121,22 +160,22 @@ public final class VersionedCheckpointScope {
 
 	public synchronized void rewind(RunnableConfig config) throws Exception {
 		validateNamespace(config);
+		failIfTerminated();
 		if (!ownMutation) {
 			return;
 		}
 		try {
 			long nextRevision = nextRevision(lastOwnRevision);
-			if (preTurnSnapshot.checkpoint().isPresent()) {
-				saver.putIfVersion(config, preTurnSnapshot.checkpoint().orElseThrow(), lastOwnRevision);
-				currentSnapshot = new CheckpointSnapshot(preTurnSnapshot.checkpoint(), nextRevision);
-			}
-			else {
-				saver.releaseIfVersion(config, lastOwnRevision);
-				currentSnapshot = new CheckpointSnapshot(java.util.Optional.empty(), nextRevision);
-			}
+			Checkpoint rewindCheckpoint = preTurnSnapshot.checkpoint()
+				.orElseGet(() -> Checkpoint.builder().state(Map.of()).nodeId(START).nextNodeId(END).build());
+			Checkpoint ownedCheckpoint = cloneCheckpoint(rewindCheckpoint);
+			saver.putIfVersion(config, ownedCheckpoint, lastOwnRevision);
+			currentSnapshot = new CheckpointSnapshot(Optional.of(ownedCheckpoint), nextRevision);
 			lastOwnRevision = nextRevision;
+			ownMutation = false;
 		}
-		catch (CheckpointConflictException ignored) {
+		catch (CheckpointConflictException ex) {
+			rememberConflict(ex);
 			// A newer owner has already moved the namespace; never reload or blind-rewind it.
 		}
 	}
@@ -159,6 +198,40 @@ public final class VersionedCheckpointScope {
 
 	private long nextRevision(long revision) {
 		return Math.addExact(revision, 1L);
+	}
+
+	private void failIfTerminated() throws CheckpointConflictException {
+		if (terminalConflict != null) {
+			throw terminalConflict;
+		}
+	}
+
+	private CheckpointConflictException rememberConflict(CheckpointConflictException conflict) {
+		if (terminalConflict == null) {
+			terminalConflict = conflict;
+		}
+		return terminalConflict;
+	}
+
+	private CheckpointSnapshot cloneSnapshot(CheckpointSnapshot snapshot) throws IOException, ClassNotFoundException {
+		Objects.requireNonNull(snapshot, "snapshot cannot be null");
+		Optional<Checkpoint> checkpoint = snapshot.checkpoint().isPresent()
+				? Optional.of(cloneCheckpoint(snapshot.checkpoint().orElseThrow())) : Optional.empty();
+		return new CheckpointSnapshot(checkpoint, snapshot.revision());
+	}
+
+	private CheckpointSnapshot cloneSnapshotUnchecked(CheckpointSnapshot snapshot) {
+		try {
+			return cloneSnapshot(snapshot);
+		}
+		catch (IOException | ClassNotFoundException ex) {
+			throw new IllegalStateException("Failed to clone checkpoint snapshot", ex);
+		}
+	}
+
+	private Checkpoint cloneCheckpoint(Checkpoint checkpoint) throws IOException, ClassNotFoundException {
+		Objects.requireNonNull(checkpoint, "checkpoint cannot be null");
+		return checkpointSerializer.bytesToObject(checkpointSerializer.objectToBytes(checkpoint));
 	}
 
 	private record ScopeKey(VersionedCheckpointSaver saver, String namespace) {

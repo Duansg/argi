@@ -314,7 +314,8 @@ public class CompiledGraph {
 		BaseCheckpointSaver saver = compileConfig.checkpointSaver()
 				.orElseThrow(() -> (new IllegalStateException("Missing CheckpointSaver!")));
 		if (saver instanceof VersionedCheckpointSaver versionedSaver) {
-			return VersionedCheckpointScope.withScope(versionedSaver, config, scope -> Flux.defer(() -> {
+			return VersionedCheckpointScope.withScope(versionedSaver, config, stateGraph.getStateSerializer(),
+					scope -> Flux.defer(() -> {
 				try {
 					return Flux.just(updateState(config, values, asNode, scope));
 				}

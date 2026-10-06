@@ -53,6 +53,7 @@ public class GraphRunner {
 			.map(saver -> CheckpointExecutionQueue.serialize(saver, config, () -> {
 				if (saver instanceof VersionedCheckpointSaver versionedSaver) {
 					return VersionedCheckpointScope.withScope(versionedSaver, config,
+							compiledGraph.stateGraph.getStateSerializer(),
 							scope -> runWithCheckpointLease(initialState, scope));
 				}
 				return runWithCheckpointLease(initialState, null);

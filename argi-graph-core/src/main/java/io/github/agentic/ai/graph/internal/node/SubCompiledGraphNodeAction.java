@@ -116,7 +116,8 @@ public record SubCompiledGraphNodeAction(String nodeId, CompileConfig parentComp
 			final RunnableConfig childConfig = subGraphRunnableConfig;
 			Supplier<Flux<GraphResponse<NodeOutput>>> execution = () -> Flux.defer(() -> {
 				if (subGraphSaver.orElse(null) instanceof VersionedCheckpointSaver versionedSaver) {
-					return VersionedCheckpointScope.withScope(versionedSaver, childConfig, scope -> Flux.defer(() -> {
+					return VersionedCheckpointScope.withScope(versionedSaver, childConfig,
+							subGraph.stateGraph.getStateSerializer(), scope -> Flux.defer(() -> {
 						try {
 							RunnableConfig executionConfig = resumeSubgraph
 									? subGraph.updateState(childConfig, state.data(), null, scope) : childConfig;
