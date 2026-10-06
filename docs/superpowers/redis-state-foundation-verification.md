@@ -19,6 +19,9 @@ Extensions baseline: `ec023a24910a0a30c0e3e1c810e4c3ac2ef0dc40`.
 Extensions tip: `23202c97`.
 Both worktrees use local branch `codex/redis-state-foundation`.
 No main merge, remote push, PR, or new production dependency was performed.
+The verified Extensions branch is also preserved in the independent persistent
+clone `/Users/aias/Work/github/argi-extensions`, with the same commit and file
+tree as the test worktree. Its Git object database does not depend on `/tmp`.
 
 ## Evidence
 
