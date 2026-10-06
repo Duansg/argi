@@ -37,7 +37,7 @@ existing Testcontainers, Valkey 8.1.2.
 - Produces the three signatures in the spec and
   `record VersionedStoreItem(Optional<StoreItem> item, long version)`.
 
-- [ ] Write RED tests for actual RedisSaver get/list with a mocked external RLock
+- [x] Write RED tests for actual RedisSaver get/list with a mocked external RLock
   returning false, and interrupted lock acquisition. Assert exceptions rather
   than mock invocation counts. Include a real graph resume test that verifies
   no node executes when checkpoint read fails. Missing metadata remains empty.
@@ -48,13 +48,13 @@ assertThrows(IllegalStateException.class, () -> saver.list(config));
 assertEquals(0, executedNodes.get());
 ```
 
-- [ ] Run `./mvnw -B -ntp -pl :argi-graph-core -am
+- [x] Run `./mvnw -B -ntp -pl :argi-graph-core -am
   -Dtest=RedisSaverReadFailureTest -Dsurefire.failIfNoSpecifiedTests=false test`.
   Expected RED: no exception on contention; preserve logs.
-- [ ] Make timeout fail explicitly and restore Thread interrupt flags on
+- [x] Make timeout fail explicitly and restore Thread interrupt flags on
   interrupted reads. Do not change successful reads, write/release behavior,
   keys, or bytes.
-- [ ] Test and implement additive contracts. Validation examples:
+- [x] Test and implement additive contracts. Validation examples:
 
 ```java
 assertThrows(IllegalArgumentException.class,
@@ -64,8 +64,8 @@ assertThrows(IllegalArgumentException.class,
 new VersionedStoreItem(Optional.empty(), 3); // tombstone is valid
 ```
 
-- [ ] Run focused tests and full Core suite; review diff and signed-off commit.
-- [ ] Leader reviews the task and installs candidate Core into the isolated
+- [x] Run focused tests and full Core suite; review diff and signed-off commit.
+- [x] Leader reviews the task and installs candidate Core into the isolated
   Maven repo `/tmp/argi-runtime-compat-m2.9nrvx3` before Task 2 starts.
 
 ## Task 2: Real Redis Store And Maintained Saver Failure Semantics
@@ -85,9 +85,9 @@ new VersionedStoreItem(Optional.empty(), 3); // tombstone is valid
   `RedisStore(RedissonClient, String storageKey)` implementing VersionedStore.
 - Default Hash key: `argi:store:items:v1`. Tests use a random unique Hash key.
 
-- [ ] Run maintained saver RED tests before changing its failure branches,
+- [x] Run maintained saver RED tests before changing its failure branches,
   using the same observable assertions as Task 1. Preserve serialization.
-- [ ] Write RED real-Valkey tests for the new Store. Testcontainers must bind
+- [x] Write RED real-Valkey tests for the new Store. Testcontainers must bind
   ephemeral ports, use Valkey 8.1.2, and create two independent clients.
 
 ```java
@@ -102,31 +102,31 @@ assertFalse(a.putItemIfVersion(item, 0));
 assertTrue(a.putItemIfVersion(item, 2));
 ```
 
-- [ ] Implement atomic JSON-envelope CAS with existing Redisson primitives or
+- [x] Implement atomic JSON-envelope CAS with existing Redisson primitives or
   one-key Lua; no separated payload/version reads or local lock safety claims.
   Bound ordinary mutation retries; reject negative expected versions; fail on
   counter exhaustion before mutation. Clear/delete retain tombstone revisions.
-- [ ] Extend tests for exactly one of two conditional writers winning, ordinary
+- [x] Extend tests for exactly one of two conditional writers winning, ordinary
   contended updates, search/filter/sort/pagination, prefix namespace listing,
   separate Store keys, nested business JSON markers, scoped clear, client
   reconstruction, and an injected Long.MAX_VALUE revision without corruption.
-- [ ] Run focused module tests and existing Redis compatibility tests:
+- [x] Run focused module tests and existing Redis compatibility tests:
   `mvn -B -ntp -Dmaven.repo.local=/tmp/argi-runtime-compat-m2.9nrvx3
   -pl :argi-graph-persistence-redis -am test`.
   Expected GREEN with real Redis tests not skipped.
-- [ ] Document explicit adoption, unchanged legacy classes, CAS semantics,
+- [x] Document explicit adoption, unchanged legacy classes, CAS semantics,
   persistent tombstones, non-transactional cross-item scans/clear, and the lack
   of Worker/graph checkpoint recovery guarantees. Signed-off commit.
 
 ## Task 3: Integrated Verification And Independent Review
 
-- [ ] Independently review both task diffs for spec compliance and quality.
-- [ ] Run full Core tests, Checkstyle/Spotless, lint, licenses, and diff checks.
-- [ ] Install candidate Core into the isolated Maven repository and run full
+- [x] Independently review both task diffs for spec compliance and quality.
+- [x] Run full Core tests, Checkstyle/Spotless, lint, licenses, and diff checks.
+- [x] Install candidate Core into the isolated Maven repository and run full
   Extensions tests against it, not published/stale Core artifacts.
-- [ ] Run genuine binary/source compatibility scripts from the previously
+- [x] Run genuine binary/source compatibility scripts from the previously
   reviewed compatibility-gate branch against this candidate; do not treat the
   current main Make target's skip messages as evidence.
-- [ ] Verify old Core/Extension Redis readers remain byte-compatible.
-- [ ] Report exact completed capabilities, real Redis validation, remaining
+- [x] Verify old Core/Extension Redis readers remain byte-compatible.
+- [x] Report exact completed capabilities, real Redis validation, remaining
   checkpoint CAS/lease/recovery work, local branch names and no remote writes.
