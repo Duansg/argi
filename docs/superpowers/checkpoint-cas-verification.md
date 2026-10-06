@@ -1,7 +1,7 @@
 # Checkpoint Execution CAS Verification
 
-Status: implementation and verification gates passed; final whole-branch review
-in progress. Do not treat the pending review row as completion evidence.
+Status: complete. Implementation, verification gates and independent final
+cross-repository review passed. Both checkpoint-CAS branches remain local.
 
 ## Delivery Boundary
 
@@ -56,7 +56,7 @@ revision reset is introduced.
 | Fresh full Core/Extensions | Core 1,394 tests / 219 skipped; Extensions 426 tests / 27 skipped across 73 modules; zero failures/errors |
 | Genuine binary/source compatibility | All 5 runtime modules binary-compatible with main e24b9988a; 3-file legacy consumer compiles at Java 17 |
 | Lint/license/static/secret/whitespace | Both repositories passed Maven checks, lint, licenses, tracked-HEAD gitleaks scans and diff whitespace checks |
-| Final whole-branch review | Pending |
+| Final whole-branch review | Approved; no Critical, Important or Minor findings |
 
 Logs are retained at `/tmp/argi-checkpoint-cas.JaMZMP`. Candidate linking and
 compatibility use isolated Maven repository `/tmp/argi-runtime-compat-m2.9nrvx3`.
@@ -71,6 +71,9 @@ Raw final logs are `final-core-clean-install.log` and `task4-fix1-root.log`.
 New CAS tests all ran; existing skips require optional external services/model
 credentials. Temporary guard/fallback mutations failed and were restored before
 final passing tests; none are retained in the commits.
+The final reviewer also resolved the deferred Agent-specific serializer-fixture
+question: Core configured-serializer coverage plus the explicit Agent call is
+sufficient for this batch. No unresolved findings remain.
 
 ## Remaining Distributed Runtime Work
 
