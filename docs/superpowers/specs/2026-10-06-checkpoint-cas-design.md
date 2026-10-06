@@ -60,6 +60,8 @@ state, NodeOutput, RunnableConfig.context or serializable metadata.
 ```java
 static <T> Flux<T> withScope(VersionedCheckpointSaver saver, RunnableConfig config,
         Function<VersionedCheckpointScope, Flux<T>> operation);
+static <T> Flux<T> withScope(VersionedCheckpointSaver saver, RunnableConfig config,
+        StateSerializer serializer, Function<VersionedCheckpointScope, Flux<T>> operation);
 CheckpointSnapshot snapshot();
 CheckpointSnapshot snapshot(RunnableConfig config) throws Exception;
 CheckpointSnapshot preTurnSnapshot();
@@ -79,6 +81,12 @@ requested historical checkpoint. When it differs from the cached selection,
 load that selection atomically and require its namespace revision to equal the
 scope's owned current revision. Never substitute cached head for pinned history;
 a mismatch is a terminal conflict, not a revision refresh.
+Scope owns defensive serializer copies of both retained snapshots and put inputs;
+snapshot accessors return independent copies. Clone failures precede mutations.
+Runtime call sites use the configured graph StateSerializer overload; the
+three-argument convenience overload uses the existing default Spring AI serializer.
+Remember the first conflict and fail fast without additional backend reads/writes
+on subsequent mutation or selected-read attempts from that scope.
 
 Rewind is a no-op without an owned mutation. Otherwise it uses the copied pre-turn
 checkpoint (or START/END empty state) and the last revision successfully written
