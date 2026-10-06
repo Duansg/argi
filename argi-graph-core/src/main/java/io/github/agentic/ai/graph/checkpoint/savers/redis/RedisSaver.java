@@ -218,7 +218,7 @@ public class RedisSaver implements BaseCheckpointSaver {
 			// 500ms timeout for read operations (list)
 			tryLock = lock.tryLock(500, TimeUnit.MILLISECONDS);
 			if (!tryLock) {
-				return List.of();
+				throw new IllegalStateException("Timed out acquiring Redis checkpoint read lock for thread: " + threadId);
 			}
 
 			// Get the internal thread id of the active entry
@@ -234,7 +234,9 @@ public class RedisSaver implements BaseCheckpointSaver {
 
 		}
 		catch (InterruptedException e) {
-			throw new RuntimeException(e);
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted acquiring Redis checkpoint read lock for thread: " + threadId,
+					e);
 		}
 		catch (IOException | ClassNotFoundException e) {
 			throw new RuntimeException("Failed to deserialize checkpoints", e);
@@ -255,7 +257,7 @@ public class RedisSaver implements BaseCheckpointSaver {
 			// 500ms timeout for read operations (get)
 			tryLock = lock.tryLock(500, TimeUnit.MILLISECONDS);
 			if (!tryLock) {
-				return Optional.empty();
+				throw new IllegalStateException("Timed out acquiring Redis checkpoint read lock for thread: " + threadId);
 			}
 
 			// Get the internal thread id of the active entry
@@ -279,7 +281,9 @@ public class RedisSaver implements BaseCheckpointSaver {
 
 		}
 		catch (InterruptedException e) {
-			throw new RuntimeException(e);
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Interrupted acquiring Redis checkpoint read lock for thread: " + threadId,
+					e);
 		}
 		catch (IOException | ClassNotFoundException e) {
 			throw new RuntimeException("Failed to deserialize checkpoints", e);
