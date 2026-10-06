@@ -19,6 +19,8 @@ import io.github.agentic.ai.graph.action.AsyncNodeActionWithConfig;
 import io.github.agentic.ai.graph.action.Command;
 import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
 import io.github.agentic.ai.graph.exception.Errors;
 import io.github.agentic.ai.graph.exception.GraphStateException;
 import io.github.agentic.ai.graph.exception.RunnableErrors;
@@ -311,6 +313,16 @@ public class CompiledGraph {
 			throws Exception {
 		BaseCheckpointSaver saver = compileConfig.checkpointSaver()
 				.orElseThrow(() -> (new IllegalStateException("Missing CheckpointSaver!")));
+		if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+			return VersionedCheckpointScope.withScope(versionedSaver, config, scope -> Flux.defer(() -> {
+				try {
+					return Flux.just(updateState(config, values, asNode, scope));
+				}
+				catch (Exception ex) {
+					return Flux.error(ex);
+				}
+			})).single().block();
+		}
 
 		// merge values with checkpoint values
 		Checkpoint branchCheckpoint = saver.get(config)
@@ -328,6 +340,36 @@ public class CompiledGraph {
 		}
 		// update checkpoint in saver
 		RunnableConfig newConfig = saver.put(config, branchCheckpoint);
+
+		return RunnableConfig.builder(newConfig).checkPointId(branchCheckpoint.getId()).nextNode(nextNodeId).build();
+	}
+
+	public RunnableConfig updateState(RunnableConfig config, Map<String, Object> values, String asNode,
+			VersionedCheckpointScope checkpointScope) throws Exception {
+		BaseCheckpointSaver saver = compileConfig.checkpointSaver()
+				.orElseThrow(() -> (new IllegalStateException("Missing CheckpointSaver!")));
+		if (!(saver instanceof VersionedCheckpointSaver versionedSaver)) {
+			return updateState(config, values, asNode);
+		}
+		Objects.requireNonNull(checkpointScope, "checkpointScope cannot be null");
+		checkpointScope.validate(versionedSaver, config);
+
+		Checkpoint branchCheckpoint = checkpointScope.snapshot(config)
+			.checkpoint()
+			.map(this::copyCheckpointWithClonedState)
+			.map(Checkpoint::copyOf)
+			.map(cp -> cp.updateState(values, keyStrategyMap))
+			.orElseThrow(() -> (new IllegalStateException("Missing Checkpoint!")));
+
+		String nextNodeId = null;
+		if (asNode != null) {
+			var nextNodeCommand = nextNodeId(asNode, branchCheckpoint.getState(), config);
+
+			nextNodeId = nextNodeCommand.gotoNode();
+			branchCheckpoint = branchCheckpoint.updateState(nextNodeCommand.update(), keyStrategyMap);
+
+		}
+		RunnableConfig newConfig = checkpointScope.put(config, branchCheckpoint);
 
 		return RunnableConfig.builder(newConfig).checkPointId(branchCheckpoint.getId()).nextNode(nextNodeId).build();
 	}
@@ -487,6 +529,20 @@ public class CompiledGraph {
 	 */
 	public OverAllState cloneState(Map<String, Object> data) throws IOException, ClassNotFoundException {
 		return new OverAllState(stateGraph.getStateSerializer().cloneObject(data).data(), getKeyStrategyMap());
+	}
+
+	private Checkpoint copyCheckpointWithClonedState(Checkpoint checkpoint) {
+		try {
+			return Checkpoint.builder()
+				.id(checkpoint.getId())
+				.state(cloneState(checkpoint.getState()).data())
+				.nodeId(checkpoint.getNodeId())
+				.nextNodeId(checkpoint.getNextNodeId())
+				.build();
+		}
+		catch (IOException | ClassNotFoundException ex) {
+			throw new IllegalStateException("Failed to clone checkpoint state", ex);
+		}
 	}
 
 	/**

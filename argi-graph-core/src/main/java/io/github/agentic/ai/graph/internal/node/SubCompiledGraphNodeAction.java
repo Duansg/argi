@@ -24,6 +24,8 @@ import io.github.agentic.ai.graph.OverAllState;
 import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.action.AsyncNodeActionWithConfig;
 import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
 import io.github.agentic.ai.graph.utils.TypeRef;
 
 import reactor.core.publisher.Flux;
@@ -113,6 +115,21 @@ public record SubCompiledGraphNodeAction(String nodeId, CompileConfig parentComp
 		try {
 			final RunnableConfig childConfig = subGraphRunnableConfig;
 			Supplier<Flux<GraphResponse<NodeOutput>>> execution = () -> Flux.defer(() -> {
+				if (subGraphSaver.orElse(null) instanceof VersionedCheckpointSaver versionedSaver) {
+					return VersionedCheckpointScope.withScope(versionedSaver, childConfig, scope -> Flux.defer(() -> {
+						try {
+							RunnableConfig executionConfig = resumeSubgraph
+									? subGraph.updateState(childConfig, state.data(), null, scope) : childConfig;
+							AtomicReference<Map<String, Object>> subGraphInputState =
+									new AtomicReference<>(new HashMap<>(state.data()));
+							return subGraph.graphResponseStream(state, executionConfig)
+								.map(response -> toParentDeltaResponse(response, subGraphInputState));
+						}
+						catch (Exception e) {
+							return Flux.error(e);
+						}
+					}));
+				}
 				try {
 					RunnableConfig executionConfig = resumeSubgraph
 							? subGraph.updateState(childConfig, state.data()) : childConfig;

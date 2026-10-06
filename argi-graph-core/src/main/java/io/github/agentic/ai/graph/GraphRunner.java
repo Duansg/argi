@@ -17,6 +17,8 @@ package io.github.agentic.ai.graph;
 
 import io.github.agentic.ai.graph.executor.MainGraphExecutor;
 import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
 
 import reactor.core.publisher.Flux;
 
@@ -48,14 +50,26 @@ public class GraphRunner {
 
 	public Flux<GraphResponse<NodeOutput>> run(OverAllState initialState) {
 		return compiledGraph.compileConfig.checkpointSaver()
-			.map(saver -> CheckpointExecutionQueue.serialize(saver, config, () -> runWithCheckpointLease(initialState)))
+			.map(saver -> CheckpointExecutionQueue.serialize(saver, config, () -> {
+				if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+					return VersionedCheckpointScope.withScope(versionedSaver, config,
+							scope -> runWithCheckpointLease(initialState, scope));
+				}
+				return runWithCheckpointLease(initialState, null);
+			}))
 			.orElseGet(() -> runWithCheckpointLease(initialState));
 	}
 
 	private Flux<GraphResponse<NodeOutput>> runWithCheckpointLease(OverAllState initialState) {
+		return runWithCheckpointLease(initialState, null);
+	}
+
+	private Flux<GraphResponse<NodeOutput>> runWithCheckpointLease(OverAllState initialState,
+			VersionedCheckpointScope checkpointScope) {
 		return Flux.defer(() -> {
 			try {
-				GraphRunnerContext context = new GraphRunnerContext(initialState, config, compiledGraph);
+				GraphRunnerContext context = new GraphRunnerContext(initialState, config, compiledGraph,
+						checkpointScope);
 				// Delegate to the main execution handler, then expand step continuations
 				// iteratively (depth-first). Executors emit a continuation marker as the
 				// last element of each step instead of recursively nesting the next step

@@ -18,7 +18,11 @@ package io.github.agentic.ai.graph;
 import io.github.agentic.ai.graph.action.AsyncNodeActionWithConfig;
 import io.github.agentic.ai.graph.action.Command;
 import io.github.agentic.ai.graph.internal.edge.EdgeValue;
+import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.graph.checkpoint.CheckpointSnapshot;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
 import io.github.agentic.ai.graph.exception.RunnableErrors;
 import io.github.agentic.ai.graph.internal.node.ParallelNode;
 import io.github.agentic.ai.graph.internal.node.ResumableSubGraphAction;
@@ -88,6 +92,8 @@ public class GraphRunnerContext {
 
 	private final Object checkpointWriteMonitor = new Object();
 
+	private final VersionedCheckpointScope checkpointScope;
+
 	public void markCancelled() {
 		this.cancelled = true;
 		// Wait for a checkpoint write that passed the cancellation check to finish.
@@ -106,8 +112,14 @@ public class GraphRunnerContext {
 
 	public GraphRunnerContext(OverAllState initialState, RunnableConfig config, CompiledGraph compiledGraph)
 			throws Exception {
+		this(initialState, config, compiledGraph, null);
+	}
+
+	public GraphRunnerContext(OverAllState initialState, RunnableConfig config, CompiledGraph compiledGraph,
+			VersionedCheckpointScope checkpointScope) throws Exception {
 		this.compiledGraph = compiledGraph;
 		this.config = config;
+		this.checkpointScope = checkpointScope;
 
 		if (config.metadata(RunnableConfig.HUMAN_FEEDBACK_METADATA_KEY).isPresent() || config.checkPointId().isPresent()) {
 			initializeFromResume(initialState, config);
@@ -116,12 +128,12 @@ public class GraphRunnerContext {
 		}
 	}
 
-	private void initializeFromResume(OverAllState initialState, RunnableConfig config) {
+	private void initializeFromResume(OverAllState initialState, RunnableConfig config) throws Exception {
 		log.trace("RESUME REQUEST");
 
 		var saver = compiledGraph.compileConfig.checkpointSaver()
 				.orElseThrow(() -> new IllegalStateException("Resume request without a configured checkpoint saver!"));
-		var checkpointOptional = saver.get(config);
+		Optional<Checkpoint> checkpointOptional = checkpointSnapshot(saver, config).checkpoint();
 		if (checkpointOptional.isEmpty()) {
 			// 多 agent 编排下，父图恢复时只有被中断的子 agent 有 checkpoint；其它子 agent
 			// 从未中断、没有 checkpoint，应作为新会话初始化而不是抛异常。
@@ -147,14 +159,14 @@ public class GraphRunnerContext {
 
 		this.currentNodeId = null;
 		this.nextNodeId = checkpoint.getNextNodeId();
-		this.overallState = stateCreate(checkpoint.getState(), initialState);
+		this.overallState = stateCreate(cloneState(checkpoint.getState()).data(), initialState);
 		this.overallState.input(initialState.data());
 		this.resumeFrom = checkpoint.getNodeId();
 
 		log.trace("RESUME FROM {}", checkpoint.getNodeId());
 	}
 
-	private void initializeFromStart(OverAllState initialState, RunnableConfig config) {
+	private void initializeFromStart(OverAllState initialState, RunnableConfig config) throws Exception {
 		log.trace("START");
 
 		Map<String, Object> inputs = initialState.data();
@@ -164,7 +176,26 @@ public class GraphRunnerContext {
 		}
 
 		// Use CompiledGraph's getInitialState method
-		this.overallState = stateCreate(compiledGraph.getInitialState(inputs, config), initialState);
+		if (checkpointScope != null && compiledGraph.compileConfig.checkpointSaver()
+			.orElse(null) instanceof VersionedCheckpointSaver saver) {
+			checkpointScope.validate(saver, config);
+			Map<String, Object> base = checkpointScope.snapshot()
+				.checkpoint()
+				.map(Checkpoint::getState)
+				.map(state -> {
+					try {
+						return cloneState(state).data();
+					}
+					catch (Exception ex) {
+						throw new IllegalStateException("Failed to clone checkpoint state", ex);
+					}
+				})
+				.orElseGet(HashMap::new);
+			this.overallState = stateCreate(OverAllState.updateState(base, inputs, getKeyStrategyMap()), initialState);
+		}
+		else {
+			this.overallState = stateCreate(compiledGraph.getInitialState(inputs, config), initialState);
+		}
 		this.currentNodeId = START;
 		this.nextNodeId = null;
 	}
@@ -181,6 +212,18 @@ public class GraphRunnerContext {
 				.withData(inputs)
 				.withStore(initialState.getStore())
 				.build();
+	}
+
+	private CheckpointSnapshot checkpointSnapshot(BaseCheckpointSaver saver, RunnableConfig config) throws Exception {
+		if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+			if (checkpointScope == null) {
+				throw new IllegalStateException("Missing versioned checkpoint scope");
+			}
+			checkpointScope.validate(versionedSaver, config);
+			return checkpointScope.snapshot(config);
+		}
+		Optional<Checkpoint> checkpoint = saver.get(config);
+		return new CheckpointSnapshot(checkpoint, checkpoint.isPresent() ? 1 : 0);
 	}
 
 	// Helper methods
@@ -294,11 +337,34 @@ public class GraphRunnerContext {
 				// Force checkPointId to null to ensure we append a new checkpoint instead of
 				// replacing the current one
 				RunnableConfig appendConfig = RunnableConfig.builder(config).checkPointId(null).build();
-				this.config = compiledGraph.compileConfig.checkpointSaver().get().put(appendConfig, cp);
+				BaseCheckpointSaver saver = compiledGraph.compileConfig.checkpointSaver().get();
+				if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+					if (checkpointScope == null) {
+						throw new IllegalStateException("Missing versioned checkpoint scope");
+					}
+					checkpointScope.validate(versionedSaver, appendConfig);
+					this.config = checkpointScope.put(appendConfig, cp);
+				}
+				else {
+					this.config = saver.put(appendConfig, cp);
+				}
 				return Optional.of(cp);
 			}
 		}
 		return Optional.empty();
+	}
+
+	public BaseCheckpointSaver.Tag releaseCheckpoint() throws Exception {
+		BaseCheckpointSaver saver = compiledGraph.compileConfig.checkpointSaver()
+			.orElseThrow(() -> new IllegalStateException("Missing CheckpointSaver!"));
+		if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+			if (checkpointScope == null) {
+				throw new IllegalStateException("Missing versioned checkpoint scope");
+			}
+			checkpointScope.validate(versionedSaver, config);
+			return checkpointScope.release(config);
+		}
+		return saver.release(config);
 	}
 
 	// ================================================================================================================

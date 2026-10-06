@@ -55,10 +55,7 @@ public abstract class BaseGraphExecutor {
 			try {
 				if (context.getCompiledGraph().compileConfig.releaseThread()
 						&& context.getCompiledGraph().compileConfig.checkpointSaver().isPresent()) {
-					BaseCheckpointSaver.Tag tag = context
-						.getCompiledGraph().compileConfig.checkpointSaver()
-						.get()
-						.release(context.getConfig());
+					BaseCheckpointSaver.Tag tag = context.releaseCheckpoint();
 					resultValue.set(tag);
 				} else {
 					resultValue.set(new HashMap<>(context.getOverallState().data()));

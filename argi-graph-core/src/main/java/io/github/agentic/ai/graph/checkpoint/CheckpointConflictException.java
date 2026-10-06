@@ -20,7 +20,10 @@ package io.github.agentic.ai.graph.checkpoint;
  * from the caller's expected revision.
  * <p>
  * The exception intentionally carries only namespace and revision metadata, never
- * checkpoint state payloads.
+ * checkpoint state payloads. {@code actualRevision} is the latest revision observed by
+ * the saver for diagnostics, or {@code -1} when that diagnostic read failed and the
+ * failure is attached as a suppressed exception. It is not authority to retry a failed
+ * mutation.
  */
 public class CheckpointConflictException extends Exception {
 

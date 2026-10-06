@@ -50,7 +50,9 @@ class VersionedMemoryCheckpointSaverTest {
 	void snapshotRequiresOwnedOptionalAndNonNegativeRevision() {
 		assertAll(
 				() -> assertThrows(NullPointerException.class, () -> new CheckpointSnapshot(null, 0)),
-				() -> assertThrows(IllegalArgumentException.class, () -> new CheckpointSnapshot(Optional.empty(), -1)));
+				() -> assertThrows(IllegalArgumentException.class, () -> new CheckpointSnapshot(Optional.empty(), -1)),
+				() -> assertThrows(IllegalArgumentException.class,
+						() -> new CheckpointSnapshot(Optional.of(checkpoint("zero", "invalid")), 0)));
 	}
 
 	@Test

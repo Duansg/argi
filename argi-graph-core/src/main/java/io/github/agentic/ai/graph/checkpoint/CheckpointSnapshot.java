@@ -34,6 +34,9 @@ public record CheckpointSnapshot(Optional<Checkpoint> checkpoint, long revision)
 		if (revision < 0) {
 			throw new IllegalArgumentException("revision cannot be negative");
 		}
+		if (revision == 0 && checkpoint.isPresent()) {
+			throw new IllegalArgumentException("present checkpoint requires a positive revision");
+		}
 	}
 
 }
