@@ -38,6 +38,10 @@ invalid. A mismatch throws CheckpointConflictException and changes nothing.
 The exception exposes namespace, expectedRevision and actualRevision without
 capturing state payloads. Snapshot state is a consistent, independently owned
 read; providers must not return their mutable internal storage as the snapshot.
+For a failed atomic compare, actualRevision is the latest observed revision,
+not necessarily the revision at the failed comparison instant. If a diagnostic
+read fails, use -1 (unknown) and attach that failure as suppressed; the typed
+conflict remains terminal and never authorizes retry.
 
 Provide VersionedMemoryCheckpointSaver in checkpoint.savers as the Core reference.
 Compose the existing MemorySaver rather than overriding its final methods.
@@ -57,6 +61,7 @@ state, NodeOutput, RunnableConfig.context or serializable metadata.
 static <T> Flux<T> withScope(VersionedCheckpointSaver saver, RunnableConfig config,
         Function<VersionedCheckpointScope, Flux<T>> operation);
 CheckpointSnapshot snapshot();
+CheckpointSnapshot snapshot(RunnableConfig config) throws Exception;
 CheckpointSnapshot preTurnSnapshot();
 boolean hasOwnMutation();
 RunnableConfig put(RunnableConfig config, Checkpoint checkpoint) throws Exception;
@@ -69,6 +74,11 @@ loads one atomic initial snapshot and installs a new scope. Cold resubscription
 must create a fresh scope. Scope mutations are synchronized; advance revision
 and current snapshot only after known successful mutations. Compute next revision
 before mutation. A conflict is terminal for the scope; no reload/retry/overwrite.
+The parameterized snapshot validates saver/namespace identity and preserves a
+requested historical checkpoint. When it differs from the cached selection,
+load that selection atomically and require its namespace revision to equal the
+scope's owned current revision. Never substitute cached head for pinned history;
+a mismatch is a terminal conflict, not a revision refresh.
 
 Rewind is a no-op without an owned mutation. Otherwise it uses the copied pre-turn
 checkpoint (or START/END empty state) and the last revision successfully written

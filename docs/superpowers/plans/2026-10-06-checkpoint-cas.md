@@ -67,6 +67,8 @@ internal/node/SubCompiledGraphNodeAction; create focused runtime/scope tests.
 **Interfaces:** Consumes Task1 contracts. Produces withScope/snapshot/preTurnSnapshot/
 hasOwnMutation/put/release/rewind in the spec. Adds GraphRunnerContext constructor
 overload accepting scope; CompiledGraph updateState overload accepting scope.
+The parameterized snapshot(config) preserves pinned history and validates its
+observed namespace revision against the scope's current owned revision.
 
 - [ ] Write RED real-graph tests proving stale execution and manual update/release
   cannot replace a winning checkpoint, while legacy savers still behave normally.
