@@ -91,8 +91,8 @@ new VersionedStoreItem(Optional.empty(), 3); // tombstone is valid
   ephemeral ports, use Valkey 8.1.2, and create two independent clients.
 
 ```java
-RedisStore a = new RedisStore(clientA, uniqueKey);
-RedisStore b = new RedisStore(clientB, uniqueKey);
+RedisStore a = new RedisStore(firstClient, uniqueKey);
+RedisStore b = new RedisStore(secondClient, uniqueKey);
 assertTrue(a.putItemIfVersion(item, 0));
 assertEquals(1, b.getVersionedItem(namespace, key).version());
 assertFalse(b.putItemIfVersion(otherItem, 0));
