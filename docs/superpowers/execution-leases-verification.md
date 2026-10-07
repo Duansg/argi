@@ -5,8 +5,8 @@
 Local opt-in execution leases and checkpoint fencing, following
 `specs/2026-10-06-execution-leases-design.md`. Core contracts, lifecycle and
 Agent dispatch and Redis implementation have passed task reviews. Final
-cross-repository review is pending; this document does not claim the batch
-is complete.
+cross-repository review is complete, with no Critical, Important or Minor
+findings. The batch is verified for local handoff only.
 
 Core candidate: `a58321ae9`, baseline `da17359cf`.
 Extensions candidate: `ed078357`, baseline `b81e3516`.
@@ -115,7 +115,10 @@ Core lifecycle findings repaired queue/unlock ordering, direct deadline checks,
 callback registration, close/renew races and stale deadline callbacks. Redis
 review added backend-specific cancellation/nesting/fault tests and exposed the
 need to invalidate scope on leased RPC failure. Scoped re-reviews confirmed
-the repairs and found no new blocking issues. Whole-branch review is pending.
+the repairs and found no new blocking issues. Whole-branch review covered
+33 changed files across Core and Extensions, checked the retained raw validation
+logs and found no new issues. Both local feature branches and worktrees remain
+available; no merge, push, PR or artifact publication was performed.
 
 ## Boundaries
 
@@ -129,7 +132,9 @@ the repairs and found no new blocking issues. Whole-branch review is pending.
 - Redis fencing assumes one authoritative retained history. Asynchronous HA
   failover or backup rollback does not provide consensus-level fencing.
 
-## Pending
+## Handoff
 
-Whole-branch cross-repository review and final local handoff. No implementation
-or dynamic verification task remains open at the individual task gates.
+No implementation, verification or review task remains open in this batch.
+Core runtime source candidate is `a58321ae9`; later Core commits only record
+verification documentation. Extensions candidate is `ed078357`. The original
+Core main checkout remains at `e24b9988a`, including its existing untracked files.
