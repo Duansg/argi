@@ -100,9 +100,9 @@ public class MemoryLeasedCheckpointSaver implements LeasedCheckpointSaver {
 	public ExecutionLease acquireLease(RunnableConfig config, UUID ownerId) {
 		requireNonNull(ownerId, "ownerId cannot be null");
 		String namespace = checkpointThreadId(config);
-		long nowMillis = clock.millis();
-		long expiresAtMillis = expiresAtMillis(nowMillis);
 		synchronized (monitor) {
+			long nowMillis = clock.millis();
+			long expiresAtMillis = expiresAtMillis(nowMillis);
 			LeaseEntry current = leasesByNamespace.get(namespace);
 			if (current != null && current.isActive(nowMillis)) {
 				throw new LeaseBusyException(namespace);
@@ -119,9 +119,9 @@ public class MemoryLeasedCheckpointSaver implements LeasedCheckpointSaver {
 	public ExecutionLease renewLease(RunnableConfig config, ExecutionLease lease) {
 		requireNonNull(lease, "lease cannot be null");
 		String namespace = checkpointThreadId(config);
-		long nowMillis = clock.millis();
-		long expiresAtMillis = expiresAtMillis(nowMillis);
 		synchronized (monitor) {
+			long nowMillis = clock.millis();
+			long expiresAtMillis = expiresAtMillis(nowMillis);
 			requireActiveLease(namespace, lease, nowMillis);
 			LeaseEntry entry = new LeaseEntry(lease.ownerId(), lease.fencingToken(), expiresAtMillis);
 			leasesByNamespace.put(namespace, entry);

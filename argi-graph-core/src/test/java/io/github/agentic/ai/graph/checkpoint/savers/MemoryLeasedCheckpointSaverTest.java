@@ -37,14 +37,19 @@ import java.time.ZoneId;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 class MemoryLeasedCheckpointSaverTest {
 
@@ -146,6 +151,69 @@ class MemoryLeasedCheckpointSaverTest {
 				() -> assertThrows(LeaseLostException.class,
 						() -> saver.releaseIfLeasedVersion(config, 0, first)),
 				() -> assertTrue(saver.releaseLease(config, second)));
+	}
+
+	@Test
+	void renewUsesClockAfterWaitingForContendedMonitor() throws Exception {
+		MutableClock clock = new MutableClock();
+		BlockingStateSerializer serializer = new BlockingStateSerializer();
+		MemoryLeasedCheckpointSaver saver = new MemoryLeasedCheckpointSaver(serializer, LeaseOptions.defaults(), clock);
+		RunnableConfig config = config("contended-renew");
+		ExecutionLease lease = saver.acquireLease(config, UUID.randomUUID());
+		AtomicReference<Throwable> holderFailure = new AtomicReference<>();
+		Thread holder = blockingPutThread(saver, config, lease, holderFailure);
+		holder.start();
+		serializer.awaitBlockedInWrite();
+
+		AtomicReference<Object> renewalResult = new AtomicReference<>();
+		Thread renewer = new Thread(() -> renewalResult.set(renewResult(saver, config, lease)),
+				"lease-renew-contender");
+		renewer.start();
+		awaitMonitorBlocked(renewer);
+
+		clock.advance(Duration.ofSeconds(31));
+		serializer.releaseWrite();
+		join(holder);
+		join(renewer);
+
+		assertAll(
+				() -> assertNoThreadFailure(holderFailure),
+				() -> assertInstanceOf(LeaseLostException.class, renewalResult.get()),
+				() -> assertEquals(1, saver.getVersioned(config).revision()));
+	}
+
+	@Test
+	void acquireUsesClockAfterWaitingForContendedMonitor() throws Exception {
+		MutableClock clock = new MutableClock();
+		BlockingStateSerializer serializer = new BlockingStateSerializer();
+		MemoryLeasedCheckpointSaver saver = new MemoryLeasedCheckpointSaver(serializer, LeaseOptions.defaults(), clock);
+		RunnableConfig config = config("contended-acquire");
+		ExecutionLease first = saver.acquireLease(config, UUID.randomUUID());
+		AtomicReference<Throwable> holderFailure = new AtomicReference<>();
+		Thread holder = blockingPutThread(saver, config, first, holderFailure);
+		holder.start();
+		serializer.awaitBlockedInWrite();
+
+		UUID secondOwner = UUID.randomUUID();
+		AtomicReference<Object> acquireResult = new AtomicReference<>();
+		Thread acquirer = new Thread(() -> acquireResult.set(acquireResult(saver, config, secondOwner)),
+				"lease-acquire-contender");
+		acquirer.start();
+		awaitMonitorBlocked(acquirer);
+
+		clock.advance(Duration.ofSeconds(31));
+		long expectedDeadline = clock.millis() + LeaseOptions.defaults().ttl().toMillis();
+		serializer.releaseWrite();
+		join(holder);
+		join(acquirer);
+
+		ExecutionLease second = assertInstanceOf(ExecutionLease.class, acquireResult.get());
+		assertAll(
+				() -> assertNoThreadFailure(holderFailure),
+				() -> assertEquals(secondOwner, second.ownerId()),
+				() -> assertTrue(second.fencingToken() > first.fencingToken()),
+				() -> assertEquals(expectedDeadline, second.expiresAtMillis()),
+				() -> assertEquals(1, saver.getVersioned(config).revision()));
 	}
 
 	@Test
@@ -300,6 +368,63 @@ class MemoryLeasedCheckpointSaverTest {
 			.build();
 	}
 
+	private static Thread blockingPutThread(MemoryLeasedCheckpointSaver saver, RunnableConfig config,
+			ExecutionLease lease, AtomicReference<Throwable> failure) {
+		return new Thread(() -> {
+			try {
+				saver.putIfLeasedVersion(config, checkpoint("blocked-write", "blocked-write"), 0, lease);
+			}
+			catch (Throwable ex) {
+				failure.set(ex);
+			}
+		}, "lease-monitor-holder");
+	}
+
+	private static Object renewResult(MemoryLeasedCheckpointSaver saver, RunnableConfig config, ExecutionLease lease) {
+		try {
+			return saver.renewLease(config, lease);
+		}
+		catch (Throwable ex) {
+			return ex;
+		}
+	}
+
+	private static Object acquireResult(MemoryLeasedCheckpointSaver saver, RunnableConfig config, UUID ownerId) {
+		try {
+			return saver.acquireLease(config, ownerId);
+		}
+		catch (Throwable ex) {
+			return ex;
+		}
+	}
+
+	private static void awaitMonitorBlocked(Thread thread) {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		while (thread.getState() != Thread.State.BLOCKED) {
+			if (!thread.isAlive()) {
+				fail("Thread ended before blocking on saver monitor");
+			}
+			if (System.nanoTime() > deadline) {
+				fail("Timed out waiting for thread to block on saver monitor; state=" + thread.getState());
+			}
+			Thread.onSpinWait();
+		}
+	}
+
+	private static void join(Thread thread) throws InterruptedException {
+		thread.join(TimeUnit.SECONDS.toMillis(5));
+		if (thread.isAlive()) {
+			fail("Thread did not finish: " + thread.getName());
+		}
+	}
+
+	private static void assertNoThreadFailure(AtomicReference<Throwable> failure) {
+		Throwable throwable = failure.get();
+		if (throwable != null) {
+			fail("Thread failed", throwable);
+		}
+	}
+
 	@SuppressWarnings("unchecked")
 	private static void setRetainedFence(MemoryLeasedCheckpointSaver saver, RunnableConfig config, long fence)
 			throws Exception {
@@ -367,6 +492,49 @@ class MemoryLeasedCheckpointSaverTest {
 		@Override
 		public Map<String, Object> readData(java.io.ObjectInput in) throws java.io.IOException, ClassNotFoundException {
 			return StateGraph.DEFAULT_JACKSON_SERIALIZER.readData(in);
+		}
+
+	}
+
+	private static final class BlockingStateSerializer extends StateSerializer {
+
+		private final CountDownLatch enteredWrite = new CountDownLatch(1);
+
+		private final CountDownLatch releaseWrite = new CountDownLatch(1);
+
+		private boolean blocking = true;
+
+		private BlockingStateSerializer() {
+			super(StateGraph.DEFAULT_JACKSON_SERIALIZER.stateFactory());
+		}
+
+		@Override
+		public void writeData(Map<String, Object> data, java.io.ObjectOutput out) throws java.io.IOException {
+			if (blocking) {
+				enteredWrite.countDown();
+				try {
+					assertTrue(releaseWrite.await(5, TimeUnit.SECONDS));
+				}
+				catch (InterruptedException ex) {
+					Thread.currentThread().interrupt();
+					throw new java.io.IOException("Interrupted while blocking serializer write", ex);
+				}
+				blocking = false;
+			}
+			StateGraph.DEFAULT_JACKSON_SERIALIZER.writeData(data, out);
+		}
+
+		@Override
+		public Map<String, Object> readData(java.io.ObjectInput in) throws java.io.IOException, ClassNotFoundException {
+			return StateGraph.DEFAULT_JACKSON_SERIALIZER.readData(in);
+		}
+
+		private void awaitBlockedInWrite() throws InterruptedException {
+			assertTrue(enteredWrite.await(5, TimeUnit.SECONDS));
+		}
+
+		private void releaseWrite() {
+			releaseWrite.countDown();
 		}
 
 	}
