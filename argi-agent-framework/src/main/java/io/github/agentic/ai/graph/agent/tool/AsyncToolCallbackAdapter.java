@@ -15,6 +15,8 @@
  */
 package io.github.agentic.ai.graph.agent.tool;
 
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
+
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
@@ -97,6 +99,14 @@ public class AsyncToolCallbackAdapter implements AsyncToolCallback {
 	@Override
 	public CompletableFuture<String> callAsync(String arguments, ToolContext context) {
 		return CompletableFuture.supplyAsync(() -> delegate.call(arguments, context), executor);
+	}
+
+	public CompletableFuture<String> callAsync(String arguments, ToolContext context, ExecutionGuard guard) {
+		Objects.requireNonNull(guard, "guard must not be null");
+		return CompletableFuture.supplyAsync(() -> {
+			guard.assertActive();
+			return delegate.call(arguments, context);
+		}, executor);
 	}
 
 	@Override

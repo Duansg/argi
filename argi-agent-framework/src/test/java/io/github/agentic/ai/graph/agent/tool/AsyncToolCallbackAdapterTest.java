@@ -24,14 +24,21 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.tool.metadata.ToolMetadata;
 
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
+import io.github.agentic.ai.graph.checkpoint.lease.LeaseLostException;
+
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -250,6 +257,53 @@ class AsyncToolCallbackAdapterTest {
 			assertTrue(maxConcurrent.get() > 1, "Should have concurrent executions");
 		}
 
+		@Test
+		@DisplayName("guarded callAsync should not start queued delegate after lease loss")
+		void guardedCallAsyncShouldNotStartQueuedDelegateAfterLeaseLoss() throws Exception {
+			CountDownLatch blockerStarted = new CountDownLatch(1);
+			CountDownLatch releaseBlocker = new CountDownLatch(1);
+			ExecutorService singleThreadExecutor = Executors.newSingleThreadExecutor();
+			try {
+				singleThreadExecutor.execute(() -> {
+					blockerStarted.countDown();
+					try {
+						releaseBlocker.await(5, TimeUnit.SECONDS);
+					}
+					catch (InterruptedException ex) {
+						Thread.currentThread().interrupt();
+					}
+				});
+				assertTrue(blockerStarted.await(5, TimeUnit.SECONDS), "executor should be occupied before tool queues");
+				AtomicInteger delegateCalls = new AtomicInteger();
+				ToolCallback delegate = new TestSyncToolCallback() {
+					@Override
+					public String call(String toolInput, ToolContext toolContext) {
+						delegateCalls.incrementAndGet();
+						return "late";
+					}
+				};
+				AsyncToolCallbackAdapter adapter = new AsyncToolCallbackAdapter(delegate, singleThreadExecutor);
+				ManualGuard guard = new ManualGuard();
+
+				@SuppressWarnings("unchecked")
+				CompletableFuture<String> future = (CompletableFuture<String>) AsyncToolCallbackAdapter.class
+					.getMethod("callAsync", String.class, ToolContext.class, ExecutionGuard.class)
+					.invoke(adapter, "{}", new ToolContext(Map.of()), guard);
+				guard.lose("queued work lost ownership");
+				releaseBlocker.countDown();
+
+				ExecutionException error = assertThrows(ExecutionException.class,
+						() -> future.get(5, TimeUnit.SECONDS));
+				LeaseLostException loss = assertRootLeaseLoss(error);
+				assertEquals("queued work lost ownership", loss.getReason());
+				assertEquals(0, delegateCalls.get(), "delegate must not start after guard loss");
+			}
+			finally {
+				releaseBlocker.countDown();
+				singleThreadExecutor.shutdownNow();
+			}
+		}
+
 	}
 
 	@Nested
@@ -342,6 +396,54 @@ class AsyncToolCallbackAdapterTest {
 				return "async-result";
 			}
 		};
+	}
+
+	private static LeaseLostException assertRootLeaseLoss(Throwable error) {
+		Throwable current = error;
+		while (current.getCause() != null) {
+			current = current.getCause();
+		}
+		return assertInstanceOf(LeaseLostException.class, current);
+	}
+
+	private static final class ManualGuard implements ExecutionGuard {
+
+		private final List<Runnable> callbacks = new ArrayList<>();
+
+		private LeaseLostException loss;
+
+		@Override
+		public synchronized void assertActive() {
+			if (loss != null) {
+				throw loss;
+			}
+		}
+
+		@Override
+		public synchronized AutoCloseable onLoss(Runnable cancellation) {
+			if (loss != null) {
+				cancellation.run();
+				return () -> {
+				};
+			}
+			callbacks.add(cancellation);
+			return () -> {
+				synchronized (ManualGuard.this) {
+					callbacks.remove(cancellation);
+				}
+			};
+		}
+
+		synchronized void lose(String reason) {
+			if (loss != null) {
+				return;
+			}
+			loss = new LeaseLostException("adapter-test", UUID.randomUUID(), 1, reason);
+			List<Runnable> toRun = new ArrayList<>(callbacks);
+			callbacks.clear();
+			toRun.forEach(Runnable::run);
+		}
+
 	}
 
 	/**

@@ -31,6 +31,8 @@ import io.github.agentic.ai.graph.agent.tool.DefaultCancellationToken;
 import io.github.agentic.ai.graph.agent.tool.StateAwareToolCallback;
 import io.github.agentic.ai.graph.agent.tool.ToolCancelledException;
 import io.github.agentic.ai.graph.agent.tool.ToolStateCollector;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
+import io.github.agentic.ai.graph.checkpoint.lease.LeaseLostException;
 import io.github.agentic.ai.graph.internal.node.ParallelNode;
 import io.github.agentic.ai.graph.state.RemoveByHash;
 
@@ -65,6 +67,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -181,6 +184,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 
 	@Override
 	public Map<String, Object> apply(OverAllState state, RunnableConfig config) throws Exception {
+		config.assertExecutionActive();
 		List<Message> messages = (List<Message>) state.value("messages").orElseThrow();
 		Message lastMessage = messages.get(messages.size() - 1);
 
@@ -247,22 +251,27 @@ public class AgentToolNode implements NodeActionWithConfig {
 	private Map<String, Object> executeToolCallsSequential(List<AssistantMessage.ToolCall> toolCalls,
 			OverAllState state, RunnableConfig config) {
 
+		config.assertExecutionActive();
 		Map<String, Object> updatedState = new HashMap<>();
 		Map<String, Object> mergedUpdates = new HashMap<>(); // Accumulated results from successful tools
 		List<ToolResponseMessage.ToolResponse> toolResponses = new ArrayList<>();
 
 		Boolean returnDirect = null;
 		for (AssistantMessage.ToolCall toolCall : toolCalls) {
+			config.assertExecutionActive();
 			// Each tool gets its own isolated update map
 			// If this tool times out, clear() only affects this map, not mergedUpdates
 			Map<String, Object> toolSpecificUpdate = new ConcurrentHashMap<>();
 			ToolCallResponse response = executeToolCallWithInterceptors(toolCall, state, config, toolSpecificUpdate,
 					false);
+			config.assertExecutionActive();
 			toolResponses.add(response.toToolResponse());
 			returnDirect = shouldReturnDirect(toolCall, returnDirect, config);
+			config.assertExecutionActive();
 			// Merge immediately - subsequent timeout clear() won't affect already-merged data
 			mergedUpdates.putAll(toolSpecificUpdate);
 		}
+		config.assertExecutionActive();
 
 		ToolResponseMessage.Builder builder = ToolResponseMessage.builder()
 				.responses(toolResponses);
@@ -319,6 +328,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 	private Map<String, Object> executeToolCallsParallel(List<AssistantMessage.ToolCall> toolCalls, OverAllState state,
 			RunnableConfig config) {
 
+		config.assertExecutionActive();
 		// Log debug message when wrapSyncToolsAsAsync is enabled but ignored in parallel
 		// mode
 		if (wrapSyncToolsAsAsync && logger.isDebugEnabled()) {
@@ -356,17 +366,21 @@ public class AgentToolNode implements NodeActionWithConfig {
 
 			return CompletableFuture.runAsync(() -> {
 				try {
+					config.assertExecutionActive();
 					// Executor queueing and permit acquisition share the tool's timeout budget.
 					long remainingNanos = timeoutNanos - (System.nanoTime() - submittedAt);
 					if (remainingNanos <= 0 || !semaphore.tryAcquire(remainingNanos, TimeUnit.NANOSECONDS)) {
 						throw new CompletionException(new TimeoutException());
 					}
 					try {
+						config.assertExecutionActive();
 						if (orderedResponses.get(index) != null || System.nanoTime() - submittedAt >= timeoutNanos) {
 							throw new CompletionException(new TimeoutException());
 						}
+						config.assertExecutionActive();
 						ToolCallResponse response = executeToolCallWithInterceptors(toolCall, stateSnapshot, config,
 								toolSpecificUpdate, true, cancellationTokens, index);
+						config.assertExecutionActive();
 						// CAS: only set if still null (not already timed out)
 						orderedResponses.compareAndSet(index, null, response);
 					}
@@ -386,6 +400,11 @@ public class AgentToolNode implements NodeActionWithConfig {
 				.exceptionally(ex -> {
 					// CAS: only set error if still null (tool hasn't completed successfully)
 					Throwable cause = ex instanceof CompletionException ? ex.getCause() : ex;
+					LeaseLostException leaseLoss = leaseLost(cause);
+					if (leaseLoss != null) {
+						failures.add(leaseLoss);
+						throw new CompletionException(leaseLoss);
+					}
 					ToolCallResponse errorResponse = ToolCallResponse.error(toolCall.id(), toolCall.name(),
 							extractErrorMessage(cause));
 					if (orderedResponses.compareAndSet(index, null, errorResponse)) {
@@ -406,9 +425,19 @@ public class AgentToolNode implements NodeActionWithConfig {
 		}).toList();
 
 		// Wait for all tools to complete
-		CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+		try {
+			CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+		}
+		catch (CompletionException ex) {
+			LeaseLostException leaseLoss = leaseLost(ex);
+			if (leaseLoss != null) {
+				throw leaseLoss;
+			}
+			throw ex;
+		}
 
 		// Build result - collect responses from AtomicReferenceArray
+		config.assertExecutionActive();
 		Map<String, Object> updatedState = new HashMap<>();
 		List<ToolResponseMessage.ToolResponse> toolResponses = new ArrayList<>();
 		Boolean returnDirect = null;
@@ -424,6 +453,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 			toolResponses.add(response.toToolResponse());
 			returnDirect = shouldReturnDirect(toolCalls.get(i), returnDirect, config);
 		}
+		config.assertExecutionActive();
 
 		ToolResponseMessage.Builder builder = ToolResponseMessage.builder().responses(toolResponses);
 		if (returnDirect != null && returnDirect) {
@@ -447,6 +477,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 	private Map<String, Object> handlePartialToolResponses(ToolResponseMessage toolResponseMessage,
 			List<Message> messages, OverAllState state, RunnableConfig config) {
 
+		config.assertExecutionActive();
 		if (messages.size() < 2) {
 			throw new IllegalStateException("Cannot find AssistantMessage before ToolResponseMessage");
 		}
@@ -487,6 +518,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 		else {
 			newResults = executeToolCallsSequential(remainingToolCalls, state, config);
 		}
+		config.assertExecutionActive();
 
 		// Merge existing responses with new responses
 		ToolResponseMessage newToolResponseMessage = (ToolResponseMessage) newResults.get("messages");
@@ -568,6 +600,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 			RunnableConfig config, Map<String, Object> extraStateFromToolCall, boolean inParallelExecution,
 			Map<Integer, DefaultCancellationToken> cancellationTokens, int toolIndex) {
 
+		config.assertExecutionActive();
 		// Create ToolCallRequest
 		ToolCallRequest request = ToolCallRequest.builder()
 				.toolCall(toolCall)
@@ -577,6 +610,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 
 		// Create base handler that actually executes the tool
 		ToolCallHandler baseHandler = req -> {
+			config.assertExecutionActive();
 			ToolCallback toolCallback = resolve(req.getToolName(), config);
 
 			if (toolCallback == null) {
@@ -595,6 +629,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 						config.threadId().orElse(THREAD_ID_DEFAULT), agentName, req.getToolName());
 			}
 
+			config.assertExecutionActive();
 			Map<String, Object> toolContextMap = new HashMap<>(toolContext);
 			toolContextMap.putAll(req.getContext());
 
@@ -609,15 +644,19 @@ public class AgentToolNode implements NodeActionWithConfig {
 			}
 
 			// Route to async or sync execution based on callback type
-			return executeToolByType(toolCallback, req, toolContextMap, config, extraStateFromToolCall,
+			ToolCallResponse response = executeToolByType(toolCallback, req, toolContextMap, config, extraStateFromToolCall,
 					inParallelExecution, cancellationTokens, toolIndex);
+			config.assertExecutionActive();
+			return response;
 		};
 
 		// Chain interceptors if any
 		ToolCallHandler chainedHandler = InterceptorChain.chainToolInterceptors(toolInterceptors, baseHandler);
 
 		// Execute the chained handler
-		return chainedHandler.call(request);
+		ToolCallResponse response = chainedHandler.call(request);
+		config.assertExecutionActive();
+		return response;
 	}
 
 	/**
@@ -674,6 +713,7 @@ public class AgentToolNode implements NodeActionWithConfig {
 			boolean inParallelExecution, Map<Integer, DefaultCancellationToken> cancellationTokens, int toolIndex) {
 
 		if (toolCallback instanceof AsyncToolCallback async) {
+			config.assertExecutionActive();
 			return executeAsyncTool(async, request, toolContextMap, config, extraStateFromToolCall, cancellationTokens,
 					toolIndex);
 		}
@@ -685,10 +725,12 @@ public class AgentToolNode implements NodeActionWithConfig {
 			Executor executor = getToolExecutor(config);
 			AsyncToolCallback wrappedAsync = AsyncToolCallbackAdapter.wrapIfNeeded(toolCallback, executor,
 					toolExecutionTimeout);
+			config.assertExecutionActive();
 			return executeAsyncTool(wrappedAsync, request, toolContextMap, config, extraStateFromToolCall,
 					cancellationTokens, toolIndex);
 		}
 		else {
+			config.assertExecutionActive();
 			return executeSyncTool(toolCallback, request, toolContextMap, config);
 		}
 	}
@@ -740,19 +782,28 @@ public class AgentToolNode implements NodeActionWithConfig {
 		ToolContext context = new ToolContext(toolContextMap);
 
 		// Create cancellation token for cancellable tools
-		DefaultCancellationToken cancellationToken = null;
+		AtomicReference<DefaultCancellationToken> cancellationToken = new AtomicReference<>();
+		AutoCloseable lossRegistration = () -> {
+		};
 
 		try {
+			config.assertExecutionActive();
 			CompletableFuture<String> future;
 
 			// Route based on callback type - use real token for cancellable tools
 			if (callback instanceof CancellableAsyncToolCallback cancellable) {
-				cancellationToken = new DefaultCancellationToken();
+				DefaultCancellationToken token = new DefaultCancellationToken();
+				cancellationToken.set(token);
 				// Store the token in the external map so outer timeout handler can cancel it
 				if (cancellationTokens != null && toolIndex >= 0) {
-					cancellationTokens.put(toolIndex, cancellationToken);
+					cancellationTokens.put(toolIndex, token);
 				}
-				future = cancellable.callAsync(request.getArguments(), context, cancellationToken);
+				future = cancellable.callAsync(request.getArguments(), context, token);
+			}
+			else if (callback instanceof AsyncToolCallbackAdapter adapter) {
+				Optional<ExecutionGuard> guard = config.executionGuard();
+				future = guard.isPresent() ? adapter.callAsync(request.getArguments(), context, guard.get())
+						: callback.callAsync(request.getArguments(), context);
 			}
 			else {
 				future = callback.callAsync(request.getArguments(), context);
@@ -763,7 +814,35 @@ public class AgentToolNode implements NodeActionWithConfig {
 						"Async tool returned null future");
 			}
 
-			String result = future.orTimeout(callback.getTimeout().toMillis(), TimeUnit.MILLISECONDS).join();
+			CompletableFuture<String> awaited = new CompletableFuture<>();
+			future.whenComplete((result, error) -> {
+				if (error == null) {
+					awaited.complete(result);
+				}
+				else {
+					awaited.completeExceptionally(error);
+				}
+			});
+			Optional<ExecutionGuard> guard = config.executionGuard();
+			if (guard.isPresent()) {
+				ExecutionGuard executionGuard = guard.get();
+				lossRegistration = executionGuard.onLoss(() -> {
+					DefaultCancellationToken token = cancellationToken.get();
+					if (token != null) {
+						token.cancel();
+					}
+					future.cancel(true);
+					try {
+						executionGuard.assertActive();
+						awaited.completeExceptionally(new CancellationException("Execution lease was lost"));
+					}
+					catch (LeaseLostException ex) {
+						awaited.completeExceptionally(ex);
+					}
+				});
+			}
+			String result = awaited.orTimeout(callback.getTimeout().toMillis(), TimeUnit.MILLISECONDS).join();
+			config.assertExecutionActive();
 
 			if (enableActingLog) {
 				logger.info("[ThreadId {}] Agent {} acting, async tool {} finished",
@@ -777,12 +856,17 @@ public class AgentToolNode implements NodeActionWithConfig {
 		}
 		catch (CompletionException e) {
 			Throwable cause = e.getCause() != null ? e.getCause() : e;
+			LeaseLostException leaseLoss = leaseLost(cause);
+			if (leaseLoss != null) {
+				throw leaseLoss;
+			}
 
 			// Clear state updates on timeout to prevent stale data from being merged
 			if (cause instanceof TimeoutException) {
 				// Cancel the token to notify the tool to stop gracefully
-				if (cancellationToken != null) {
-					cancellationToken.cancel();
+				DefaultCancellationToken token = cancellationToken.get();
+				if (token != null) {
+					token.cancel();
 				}
 				extraStateFromToolCall.clear();
 				logger.warn("Async tool {} timed out, discarding any state updates", request.getToolName());
@@ -800,12 +884,31 @@ public class AgentToolNode implements NodeActionWithConfig {
 			}
 		}
 		catch (CancellationException e) {
+			config.assertExecutionActive();
 			logger.warn("Async tool {} execution was cancelled", request.getToolName(), e);
 			return ToolCallResponse.error(request.getToolCallId(), request.getToolName(), extractErrorMessage(e));
 		}
+		catch (LeaseLostException e) {
+			throw e;
+		}
 		catch (Exception e) {
+			LeaseLostException leaseLoss = leaseLost(e);
+			if (leaseLoss != null) {
+				throw leaseLoss;
+			}
 			logger.error("Async tool {} execution failed: {}", request.getToolName(), e.getMessage(), e);
 			return ToolCallResponse.error(request.getToolCallId(), request.getToolName(), extractErrorMessage(e));
+		}
+		finally {
+			try {
+				lossRegistration.close();
+			}
+			catch (Exception ex) {
+				logger.debug("Failed to close execution guard loss registration", ex);
+			}
+			if (cancellationTokens != null && toolIndex >= 0) {
+				cancellationTokens.remove(toolIndex);
+			}
 		}
 	}
 
@@ -818,7 +921,9 @@ public class AgentToolNode implements NodeActionWithConfig {
 		ToolContext context = new ToolContext(toolContextMap);
 
 		try {
+			config.assertExecutionActive();
 			String result = callback.call(request.getArguments(), context);
+			config.assertExecutionActive();
 
 			if (enableActingLog) {
 				logger.info("[ThreadId {}] Agent {} acting, tool {} finished",
@@ -831,15 +936,38 @@ public class AgentToolNode implements NodeActionWithConfig {
 			return ToolCallResponse.success(request.getToolCallId(), request.getToolName(), result);
 		}
 		catch (ToolExecutionException e) {
+			LeaseLostException leaseLoss = leaseLost(e);
+			if (leaseLoss != null) {
+				throw leaseLoss;
+			}
 			logger.error("Tool {} execution failed, handling with processor: {}", request.getToolName(),
 					toolExecutionExceptionProcessor.getClass().getName(), e);
 			String result = toolExecutionExceptionProcessor.process(e);
+			config.assertExecutionActive();
 			return ToolCallResponse.of(request.getToolCallId(), request.getToolName(), result);
 		}
+		catch (LeaseLostException e) {
+			throw e;
+		}
 		catch (Exception e) {
+			LeaseLostException leaseLoss = leaseLost(e);
+			if (leaseLoss != null) {
+				throw leaseLoss;
+			}
 			logger.error("Tool {} execution failed: {}", request.getToolName(), e.getMessage(), e);
 			return ToolCallResponse.error(request.getToolCallId(), request.getToolName(), e);
 		}
+	}
+
+	private LeaseLostException leaseLost(Throwable error) {
+		Throwable current = error;
+		while (current != null) {
+			if (current instanceof LeaseLostException leaseLost) {
+				return leaseLost;
+			}
+			current = current.getCause();
+		}
+		return null;
 	}
 
 	/**

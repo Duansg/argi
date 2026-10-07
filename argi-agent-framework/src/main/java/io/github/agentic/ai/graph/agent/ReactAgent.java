@@ -49,8 +49,10 @@ import io.github.agentic.ai.graph.agent.node.AgentToolNode;
 import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
 import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.graph.checkpoint.LeasedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionLeaseScope;
 import io.github.agentic.ai.graph.exception.GraphRunnerException;
 import io.github.agentic.ai.graph.exception.GraphStateException;
 import io.github.agentic.ai.graph.internal.node.Node;
@@ -319,15 +321,18 @@ public class ReactAgent extends BaseAgent {
 		// committed between assembly and subscription, and every re-subscription of
 		// a cold Flux would reuse that same stale read.
 		Supplier<Flux<NodeOutput>> execution = () -> {
+			if (saver.orElse(null) instanceof LeasedCheckpointSaver leasedSaver) {
+				return ExecutionLeaseScope.withLease(leasedSaver, config,
+						lease -> VersionedCheckpointScope.withScope(leasedSaver, config,
+								compiledGraph.stateGraph.getStateSerializer(),
+								scope -> compiledGraph.stream(input, config)
+									.doFinally(signal -> rewindOnCancel(signal, config, scope))));
+			}
 			if (saver.orElse(null) instanceof VersionedCheckpointSaver versionedSaver) {
 				return VersionedCheckpointScope.withScope(versionedSaver, config,
 						compiledGraph.stateGraph.getStateSerializer(),
 						scope -> compiledGraph.stream(input, config)
-							.doFinally(signal -> {
-								if (signal == SignalType.CANCEL) {
-									rewindVersionedScope(config, scope);
-								}
-							}));
+							.doFinally(signal -> rewindOnCancel(signal, config, scope)));
 			}
 			Optional<Checkpoint> preTurnCheckpoint = saver.flatMap(s -> {
 				try {
@@ -352,6 +357,12 @@ public class ReactAgent extends BaseAgent {
 		};
 		return saver.map(checkpointSaver -> CheckpointExecutionQueue.serialize(checkpointSaver, config, execution))
 				.orElseGet(() -> Flux.defer(execution));
+	}
+
+	private void rewindOnCancel(SignalType signal, RunnableConfig config, VersionedCheckpointScope scope) {
+		if (signal == SignalType.CANCEL) {
+			rewindVersionedScope(config, scope);
+		}
 	}
 
 	private void rewindVersionedScope(RunnableConfig config, VersionedCheckpointScope scope) {
