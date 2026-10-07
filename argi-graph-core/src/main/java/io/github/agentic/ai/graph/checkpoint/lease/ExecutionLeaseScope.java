@@ -19,12 +19,13 @@ import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.checkpoint.LeasedCheckpointSaver;
 
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -70,7 +71,9 @@ public final class ExecutionLeaseScope {
 
 	private final AtomicReference<LeaseLostException> terminalLoss = new AtomicReference<>();
 
-	private final CopyOnWriteArrayList<Runnable> lossCallbacks = new CopyOnWriteArrayList<>();
+	private final Object lifecycleMonitor = new Object();
+
+	private final List<LossRegistration> lossCallbacks = new ArrayList<>();
 
 	private final Sinks.Empty<Void> lossSignal = Sinks.empty();
 
@@ -80,7 +83,7 @@ public final class ExecutionLeaseScope {
 
 	private volatile long deadlineNanos;
 
-	private ExecutionLeaseScope(LeasedCheckpointSaver saver, RunnableConfig config, ExecutionLease lease,
+	ExecutionLeaseScope(LeasedCheckpointSaver saver, RunnableConfig config, ExecutionLease lease,
 			long requestStartNanos, LongSupplier nanoTime, Scheduler timerScheduler, Scheduler rpcScheduler) {
 		this.saver = Objects.requireNonNull(saver, "saver cannot be null");
 		this.config = Objects.requireNonNull(config, "config cannot be null");
@@ -89,15 +92,9 @@ public final class ExecutionLeaseScope {
 		this.nanoTime = Objects.requireNonNull(nanoTime, "nanoTime cannot be null");
 		this.timerScheduler = Objects.requireNonNull(timerScheduler, "timerScheduler cannot be null");
 		this.rpcScheduler = Objects.requireNonNull(rpcScheduler, "rpcScheduler cannot be null");
-		this.deadlineNanos = Math.addExact(requestStartNanos,
-				TimeUnit.MILLISECONDS.toNanos(saver.leaseOptions().ttl().toMillis()));
+		this.deadlineNanos = deadlineAfter(requestStartNanos);
 		scheduleDeadline();
 		scheduleHeartbeat();
-	}
-
-	static ExecutionLeaseScope createForTest(LeasedCheckpointSaver saver, RunnableConfig config, ExecutionLease lease,
-			long requestStartNanos, LongSupplier nanoTime, Scheduler timerScheduler, Scheduler rpcScheduler) {
-		return new ExecutionLeaseScope(saver, config, lease, requestStartNanos, nanoTime, timerScheduler, rpcScheduler);
 	}
 
 	public static <T> Flux<T> withLease(LeasedCheckpointSaver saver, RunnableConfig config,
@@ -113,29 +110,26 @@ public final class ExecutionLeaseScope {
 				existing.assertActive();
 				return Flux.defer(() -> operation.apply(existing));
 			}
-			long requestStartNanos = System.nanoTime();
-			ExecutionLease lease;
-			try {
-				lease = saver.acquireLease(config, UUID.randomUUID());
-			}
-			catch (Exception ex) {
-				return Flux.error(ex);
-			}
-			ExecutionLeaseScope scope = new ExecutionLeaseScope(saver, config, lease, requestStartNanos,
-					System::nanoTime, Schedulers.parallel(), Schedulers.boundedElastic());
-			Map<ScopeKey, ExecutionLeaseScope> scopes = new HashMap<>(inherited);
-			scopes.put(key, scope);
-			Flux<T> operationFlux = Flux.defer(() -> operation.apply(scope))
-				.doOnError(error -> {
-					if (error instanceof LeaseLostException) {
-						scope.invalidate(error);
-					}
-				})
-				.contextWrite(current -> current.put(CONTEXT_KEY, scopes));
-			Flux<T> raced = operationFlux.takeUntilOther(scope.lossPublisher())
-				.concatWith(Flux.defer(() -> scope.terminalLoss.get() == null ? Flux.empty()
-						: Flux.error(scope.terminalLoss.get())));
-			return raced.doFinally(signal -> scope.close());
+			return Flux.usingWhen(Mono.fromCallable(() -> {
+				long requestStartNanos = System.nanoTime();
+				ExecutionLease lease = saver.acquireLease(config, UUID.randomUUID());
+				return new ExecutionLeaseScope(saver, config, lease, requestStartNanos, System::nanoTime,
+						Schedulers.parallel(), Schedulers.boundedElastic());
+			}), scope -> {
+				Map<ScopeKey, ExecutionLeaseScope> scopes = new HashMap<>(inherited);
+				scopes.put(key, scope);
+				Flux<T> operationFlux = Flux.defer(() -> operation.apply(scope))
+					.doOnError(error -> {
+						if (error instanceof LeaseLostException) {
+							scope.invalidate(error);
+						}
+					})
+					.contextWrite(current -> current.put(CONTEXT_KEY, scopes));
+				return operationFlux.takeUntilOther(scope.lossPublisher())
+					.concatWith(Flux.defer(() -> scope.terminalLoss.get() == null ? Flux.empty()
+							: Flux.error(scope.terminalLoss.get())));
+			}, scope -> Mono.fromRunnable(scope::close), (scope, error) -> Mono.fromRunnable(scope::close),
+					scope -> Mono.fromRunnable(scope::close));
 		});
 	}
 
@@ -167,7 +161,13 @@ public final class ExecutionLeaseScope {
 		if (loss != null) {
 			throw loss;
 		}
-		if (!active.get()) {
+		if (isDeadlineExpired()) {
+			LeaseLostException deadlineLoss = new LeaseLostException(namespace, lease.get().ownerId(),
+					lease.get().fencingToken(), "local lease deadline passed");
+			invalidate(deadlineLoss);
+			throw terminalLoss.get();
+		}
+		if (!active.get() || closed.get()) {
 			ExecutionLease current = lease.get();
 			throw new LeaseLostException(namespace, current.ownerId(), current.fencingToken(), "lease is inactive");
 		}
@@ -177,19 +177,20 @@ public final class ExecutionLeaseScope {
 		ExecutionLease current = lease.get();
 		LeaseLostException loss = cause instanceof LeaseLostException leaseLost ? leaseLost
 				: new LeaseLostException(namespace, current.ownerId(), current.fencingToken(), "lease lost", cause);
-		if (!terminalLoss.compareAndSet(null, loss)) {
-			return;
+		List<LossRegistration> callbacks;
+		synchronized (lifecycleMonitor) {
+			if (terminalLoss.get() != null) {
+				return;
+			}
+			terminalLoss.set(loss);
+			active.set(false);
+			callbacks = new ArrayList<>(lossCallbacks);
+			lossCallbacks.clear();
 		}
-		active.set(false);
 		dispose(heartbeatTask);
 		dispose(deadlineTask);
-		for (Runnable callback : lossCallbacks) {
-			try {
-				callback.run();
-			}
-			catch (Throwable ex) {
-				log.debug("Execution lease loss callback failed", ex);
-			}
+		for (LossRegistration callback : callbacks) {
+			callback.run();
 		}
 		lossSignal.tryEmitEmpty();
 	}
@@ -200,53 +201,88 @@ public final class ExecutionLeaseScope {
 
 	private void scheduleHeartbeat() {
 		Duration heartbeatInterval = saver.leaseOptions().heartbeatInterval();
-		Disposable heartbeat = Flux.interval(heartbeatInterval, timerScheduler)
-			.concatMap(ignored -> Mono.fromCallable(() -> {
+		Disposable heartbeat = timerScheduler.schedule(() -> {
+			Disposable renewal = Mono.fromCallable(() -> {
 				renew();
 				return true;
-			}).subscribeOn(rpcScheduler), 1)
-			.subscribe(ignored -> {
-			}, this::invalidate);
-		heartbeatTask.set(heartbeat);
+			}).subscribeOn(rpcScheduler).subscribe(ignored -> scheduleHeartbeat(), this::invalidate);
+			setDisposable(heartbeatTask, renewal);
+		}, heartbeatInterval.toMillis(), TimeUnit.MILLISECONDS);
+		setDisposable(heartbeatTask, heartbeat);
 	}
 
 	private void renew() throws Exception {
 		assertActive();
 		long requestStartNanos = nanoTime.getAsLong();
 		long currentDeadline = deadlineNanos;
-		if (requestStartNanos >= currentDeadline) {
+		if (isAtOrAfter(requestStartNanos, currentDeadline)) {
 			invalidate(new LeaseLostException(namespace, lease.get().ownerId(), lease.get().fencingToken(),
 					"local lease deadline passed"));
 			return;
 		}
 		ExecutionLease renewed = saver.renewLease(config, lease.get());
 		long acknowledgeNanos = nanoTime.getAsLong();
-		if (!active.get()) {
-			return;
+		LeaseLostException lateLoss = null;
+		synchronized (lifecycleMonitor) {
+			if (!active.get() || closed.get() || terminalLoss.get() != null) {
+				return;
+			}
+			if (isAtOrAfter(acknowledgeNanos, currentDeadline)) {
+				lateLoss = new LeaseLostException(namespace, lease.get().ownerId(), lease.get().fencingToken(),
+						"lease renewal acknowledged after local deadline");
+			}
+			else {
+				lease.set(renewed);
+				deadlineNanos = deadlineAfter(requestStartNanos);
+				scheduleDeadlineLocked();
+			}
 		}
-		if (acknowledgeNanos >= currentDeadline) {
-			invalidate(new LeaseLostException(namespace, lease.get().ownerId(), lease.get().fencingToken(),
-					"lease renewal acknowledged after local deadline"));
-			return;
+		if (lateLoss != null) {
+			invalidate(lateLoss);
 		}
-		lease.set(renewed);
-		deadlineNanos = Math.addExact(requestStartNanos,
-				TimeUnit.MILLISECONDS.toNanos(saver.leaseOptions().ttl().toMillis()));
-		scheduleDeadline();
 	}
 
 	private void scheduleDeadline() {
+		synchronized (lifecycleMonitor) {
+			if (!active.get() || closed.get() || terminalLoss.get() != null) {
+				return;
+			}
+			scheduleDeadlineLocked();
+		}
+	}
+
+	private void scheduleDeadlineLocked() {
 		dispose(deadlineTask);
-		long delay = Math.max(0L, deadlineNanos - nanoTime.getAsLong());
-		Disposable deadline = timerScheduler.schedule(() -> invalidate(new LeaseLostException(namespace,
-				lease.get().ownerId(), lease.get().fencingToken(), "local lease deadline passed")), delay,
+		long expectedDeadline = deadlineNanos;
+		long delay = remainingNanos(nanoTime.getAsLong(), expectedDeadline);
+		Disposable deadline = timerScheduler.schedule(() -> expireIfDeadlineElapsed(expectedDeadline), delay,
 				TimeUnit.NANOSECONDS);
 		deadlineTask.set(deadline);
 	}
 
+	private void expireIfDeadlineElapsed(long expectedDeadline) {
+		LeaseLostException deadlineLoss = null;
+		synchronized (lifecycleMonitor) {
+			if (!active.get() || closed.get() || terminalLoss.get() != null || deadlineNanos != expectedDeadline) {
+				return;
+			}
+			if (!isAtOrAfter(nanoTime.getAsLong(), expectedDeadline)) {
+				scheduleDeadlineLocked();
+				return;
+			}
+			deadlineLoss = new LeaseLostException(namespace, lease.get().ownerId(), lease.get().fencingToken(),
+					"local lease deadline passed");
+		}
+		invalidate(deadlineLoss);
+	}
+
 	private void close() {
-		if (!closed.compareAndSet(false, true)) {
-			return;
+		synchronized (lifecycleMonitor) {
+			if (!closed.compareAndSet(false, true)) {
+				return;
+			}
+			active.set(false);
+			lossCallbacks.clear();
 		}
 		dispose(heartbeatTask);
 		dispose(deadlineTask);
@@ -258,10 +294,38 @@ public final class ExecutionLeaseScope {
 		}
 	}
 
+	private boolean isDeadlineExpired() {
+		return active.get() && !closed.get() && terminalLoss.get() == null
+				&& isAtOrAfter(nanoTime.getAsLong(), deadlineNanos);
+	}
+
+	private long deadlineAfter(long requestStartNanos) {
+		return requestStartNanos + TimeUnit.MILLISECONDS.toNanos(saver.leaseOptions().ttl().toMillis());
+	}
+
+	private static long remainingNanos(long now, long deadline) {
+		long remaining = deadline - now;
+		return remaining > 0 ? remaining : 0L;
+	}
+
+	private static boolean isAtOrAfter(long now, long deadline) {
+		return now - deadline >= 0;
+	}
+
 	private static void dispose(AtomicReference<Disposable> ref) {
 		Disposable disposable = ref.getAndSet(null);
 		if (disposable != null) {
 			disposable.dispose();
+		}
+	}
+
+	private void setDisposable(AtomicReference<Disposable> ref, Disposable disposable) {
+		Disposable previous = ref.getAndSet(disposable);
+		if (previous != null) {
+			previous.dispose();
+		}
+		if (!active.get() || closed.get() || terminalLoss.get() != null) {
+			dispose(ref);
 		}
 	}
 
@@ -275,14 +339,50 @@ public final class ExecutionLeaseScope {
 		@Override
 		public AutoCloseable onLoss(Runnable cancellation) {
 			Objects.requireNonNull(cancellation, "cancellation cannot be null");
-			LeaseLostException loss = terminalLoss.get();
-			if (loss != null) {
-				cancellation.run();
-				return () -> {
-				};
+			LossRegistration registration = new LossRegistration(cancellation);
+			synchronized (lifecycleMonitor) {
+				if (terminalLoss.get() == null && active.get() && !closed.get()) {
+					lossCallbacks.add(registration);
+					return registration;
+				}
 			}
-			lossCallbacks.add(cancellation);
-			return () -> lossCallbacks.remove(cancellation);
+			if (terminalLoss.get() != null) {
+				registration.run();
+			}
+			return () -> {
+			};
+		}
+
+	}
+
+	private final class LossRegistration implements Runnable, AutoCloseable {
+
+		private final Runnable callback;
+
+		private final AtomicBoolean notified = new AtomicBoolean();
+
+		private LossRegistration(Runnable callback) {
+			this.callback = callback;
+		}
+
+		@Override
+		public void run() {
+			if (!notified.compareAndSet(false, true)) {
+				return;
+			}
+			try {
+				callback.run();
+			}
+			catch (Throwable ex) {
+				log.debug("Execution lease loss callback failed", ex);
+			}
+		}
+
+		@Override
+		public void close() {
+			synchronized (lifecycleMonitor) {
+				lossCallbacks.remove(this);
+			}
 		}
 
 	}

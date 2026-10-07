@@ -148,3 +148,83 @@ Result: no Java LSP backend is available in this harness; exposed diagnostics ar
 - No unresolved blockers.
 - Java LSP diagnostics are unavailable from the exposed diagnostics backend; Maven compile/test is the semantic verification source.
 - Some Task2 brief scenarios are covered indirectly by the end-to-end graph and saver tests rather than each having a one-test-per-bullet fixture. The focused Task2 tests explicitly cover busy-before-node, stale-owner fenced-write rejection, normal completion, cancellation cleanup while lease is held, loss cleanup rejection, matching nested scope reuse, independent namespace scopes, cold subscriptions, callback failure isolation, local deadline while renew is blocked, late renewal acknowledgement not reviving a lost scope, heartbeat revision isolation, pre-snapshot read failure before node action, leased subgraph update-then-stream, runtime guard copy/sanitization, and snapshot sanitizer behavior.
+
+## Fix Round 1
+
+Review findings addressed:
+
+- `ExecutionLeaseScope.withLease` used `doFinally`, so backend `releaseLease` could run after the inner publisher had already signaled completion to `CheckpointExecutionQueue`. A queued local turn could then acquire the local queue permit before the backend lease was released and hit `LeaseBusyException`.
+- `assertActive()` trusted the watchdog callback and did not check the monotonic local deadline itself.
+- `ExecutionGuard.onLoss(...)` had a check-then-add race and did not model removable/exactly-once registrations.
+- Normal `close()` left the scope logically active, so a stale guard could still pass and a blocked renewal acknowledgement had a path to reschedule deadline/heartbeat work.
+- Deadline scheduling now rechecks the currently expected deadline before invalidating, so obsolete deadline tasks from a prior renewal cannot kill a renewed lease.
+
+Fix:
+
+- Replaced outermost lease cleanup with `Flux.usingWhen(...)` so backend release completes before local queue completion is observed.
+- Made normal close mark the scope inactive/closed, clear callback registrations, and dispose heartbeat/deadline tasks.
+- Made `assertActive()` deadline-aware; delayed watchdog execution no longer lets expired local authority appear live.
+- Replaced `Flux.interval(...).concatMap(...)` heartbeat scheduling with one-at-a-time delayed scheduling plus off-timer RPC renewal.
+- Added guarded late-renew handling so close/loss prevents late acknowledgements from reviving state or scheduling timers.
+- Added synchronized callback registration/invalidation with an exact-once removable registration wrapper.
+- Removed the test-only factory and use the package-private dependency-injection constructor from tests; production also constructs through that constructor.
+
+RED command:
+
+```shell
+./mvnw -B -pl :argi-graph-core -Dtest=ExecutionLeaseScopeCoreIntegrationTest test > /tmp/argi-execution-leases.wYDFaV/task2-fix1-red-2.log 2>&1
+```
+
+RED result:
+
+```text
+Tests run: 16, Failures: 2, Errors: 1, Skipped: 0
+BUILD FAILURE
+```
+
+Expected failing evidence included:
+
+```text
+queuedSubscriberWaitsForBackendReleaseBeforeSecondAcquire: second local turn must not acquire backend lease before first backend release finishes
+assertActiveDetectsExpiredDeadlineEvenIfWatchdogHasNotRun: Expected LeaseLostException to be thrown, but nothing was thrown.
+normalCloseMakesGuardInactiveAndBlockedRenewAckCannotReviveIt: LeaseLostException: ... lease lost
+```
+
+Focused GREEN command:
+
+```shell
+./mvnw -B -pl :argi-graph-core -Dtest=ExecutionLeaseScopeCoreIntegrationTest test > /tmp/argi-execution-leases.wYDFaV/task2-fix1-green-focus-3.log 2>&1
+```
+
+Focused GREEN result:
+
+```text
+Tests run: 17, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+Adjacent GREEN command:
+
+```shell
+./mvnw -B -pl :argi-graph-core -Dtest=ExecutionLeaseScopeCoreIntegrationTest,MemoryLeasedCheckpointSaverTest,LeaseOptionsTest test > /tmp/argi-execution-leases.wYDFaV/task2-fix1-green-adjacent-1.log 2>&1
+```
+
+Adjacent GREEN result:
+
+```text
+Tests run: 33, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+Full ROOT command:
+
+```shell
+./mvnw -B test > /tmp/argi-execution-leases.wYDFaV/task2-fix1-full-root-1.log 2>&1
+```
+
+Full ROOT result:
+
+```text
+Tests run: 111, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```

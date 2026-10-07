@@ -25,6 +25,7 @@ import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.StateGraph;
 import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
 import io.github.agentic.ai.graph.checkpoint.CheckpointSnapshot;
 import io.github.agentic.ai.graph.checkpoint.LeasedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.config.SaverConfig;
@@ -47,6 +48,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,6 +56,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.core.Disposable;
 import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
@@ -316,7 +319,7 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 		Scheduler rpc = Schedulers.newSingle("lease-rpc-test");
 		AtomicInteger callbacks = new AtomicInteger();
 		try {
-			ExecutionLeaseScope scope = ExecutionLeaseScope.createForTest(saver, config, lease, System.nanoTime(),
+			ExecutionLeaseScope scope = new ExecutionLeaseScope(saver, config, lease, System.nanoTime(),
 					System::nanoTime, timer, rpc);
 			scope.guard().onLoss(callbacks::incrementAndGet);
 
@@ -348,7 +351,7 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 		Scheduler timer = Schedulers.newSingle("lease-heartbeat-test");
 		Scheduler rpc = Schedulers.newSingle("lease-heartbeat-rpc-test");
 		try {
-			ExecutionLeaseScope scope = ExecutionLeaseScope.createForTest(saver, config, lease, System.nanoTime(),
+			ExecutionLeaseScope scope = new ExecutionLeaseScope(saver, config, lease, System.nanoTime(),
 					System::nanoTime, timer, rpc);
 			awaitRenewCalls(saver, 1);
 			assertEquals(0, backend.getVersioned(config).revision());
@@ -435,6 +438,130 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 		assertEquals(3, childSnapshot.revision());
 		assertEquals(List.of("child"),
 				childSnapshot.checkpoint().orElseThrow().getState().get("messages"));
+	}
+
+	@Test
+	void queuedSubscriberWaitsForBackendReleaseBeforeSecondAcquire() throws Exception {
+		MutableClock clock = new MutableClock();
+		MemoryLeasedCheckpointSaver backend = new MemoryLeasedCheckpointSaver(StateGraph.DEFAULT_JACKSON_SERIALIZER,
+				LeaseOptions.defaults(), clock);
+		BlockingFirstReleaseSaver saver = new BlockingFirstReleaseSaver(backend);
+		RunnableConfig config = config("release-before-queue-grant");
+		AtomicReference<Throwable> firstError = new AtomicReference<>();
+		AtomicReference<Throwable> secondError = new AtomicReference<>();
+		AtomicReference<String> secondValue = new AtomicReference<>();
+		CountDownLatch firstComplete = new CountDownLatch(1);
+		CountDownLatch secondComplete = new CountDownLatch(1);
+		Flux<String> leasedTurn = CheckpointExecutionQueue.serialize(saver, config,
+				() -> ExecutionLeaseScope.withLease(saver, config, scope -> Flux.just("done")));
+
+		leasedTurn.subscribeOn(Schedulers.boundedElastic()).subscribe(ignored -> {
+		}, firstError::set, firstComplete::countDown);
+		assertTrue(saver.firstReleaseStarted.await(5, TimeUnit.SECONDS));
+		leasedTurn.subscribeOn(Schedulers.boundedElastic())
+			.subscribe(secondValue::set, secondError::set, secondComplete::countDown);
+
+		try {
+			assertFalse(saver.secondAcquireStarted.await(150, TimeUnit.MILLISECONDS),
+					"second local turn must not acquire backend lease before first backend release finishes");
+			assertEquals(1, saver.acquireCalls.get());
+			assertEquals(1, firstComplete.getCount(),
+					"first local turn must not complete before backend release finishes");
+		}
+		finally {
+			saver.allowFirstRelease.countDown();
+		}
+		assertTrue(firstComplete.await(5, TimeUnit.SECONDS));
+		assertTrue(secondComplete.await(5, TimeUnit.SECONDS));
+		assertNull(firstError.get());
+		assertNull(secondError.get());
+		assertEquals("done", secondValue.get());
+		assertEquals(2, saver.acquireCalls.get());
+		assertEquals(2, saver.releaseCalls.get());
+	}
+
+	@Test
+	void assertActiveDetectsExpiredDeadlineEvenIfWatchdogHasNotRun() throws Exception {
+		MutableClock clock = new MutableClock();
+		MemoryLeasedCheckpointSaver backend = new MemoryLeasedCheckpointSaver(StateGraph.DEFAULT_JACKSON_SERIALIZER,
+				new LeaseOptions(Duration.ofSeconds(1), Duration.ofMillis(500)), clock);
+		CountingLeasedSaver saver = new CountingLeasedSaver(backend);
+		RunnableConfig config = config("delayed-watchdog");
+		AtomicLong now = new AtomicLong();
+		Scheduler timer = Schedulers.newSingle("lease-delayed-watchdog-test");
+		Scheduler rpc = Schedulers.newSingle("lease-delayed-watchdog-rpc-test");
+		try {
+			ExecutionLease lease = saver.acquireLease(config, UUID.randomUUID());
+			ExecutionLeaseScope scope = new ExecutionLeaseScope(saver, config, lease, 0L, now::get, timer, rpc);
+
+			now.set(TimeUnit.SECONDS.toNanos(2));
+
+			LeaseLostException loss = assertThrows(LeaseLostException.class, scope::assertActive);
+			assertEquals("local lease deadline passed", loss.getReason());
+		}
+		finally {
+			timer.dispose();
+			rpc.dispose();
+		}
+	}
+
+	@Test
+	void normalCloseMakesGuardInactiveAndBlockedRenewAckCannotReviveIt() {
+		MutableClock clock = new MutableClock();
+		MemoryLeasedCheckpointSaver backend = new MemoryLeasedCheckpointSaver(StateGraph.DEFAULT_JACKSON_SERIALIZER,
+				new LeaseOptions(Duration.ofMillis(500), Duration.ofMillis(50)), clock);
+		BlockingRenewSaver saver = new BlockingRenewSaver(backend);
+		RunnableConfig config = config("close-during-renew");
+		AtomicReference<ExecutionLeaseScope> scopeRef = new AtomicReference<>();
+
+		String result = ExecutionLeaseScope.withLease(saver, config, scope -> {
+			scopeRef.set(scope);
+			return Mono.fromCallable(() -> {
+				assertTrue(saver.renewStarted.await(5, TimeUnit.SECONDS));
+				return "done";
+			}).flux();
+		}).single().block(Duration.ofSeconds(5));
+
+		assertEquals("done", result);
+		ExecutionLeaseScope scope = scopeRef.get();
+		assertThrows(LeaseLostException.class, scope::assertActive);
+
+		saver.allowRenew.countDown();
+		assertTrue(awaitLatch(saver.renewReturned));
+		assertThrows(LeaseLostException.class, scope::assertActive);
+		assertEquals(1, saver.releaseCalls.get());
+	}
+
+	@Test
+	void lossCallbacksCanBeRemovedAndLateRegistrationRunsExactlyOnce() throws Exception {
+		MutableClock clock = new MutableClock();
+		MemoryLeasedCheckpointSaver backend = new MemoryLeasedCheckpointSaver(StateGraph.DEFAULT_JACKSON_SERIALIZER,
+				LeaseOptions.defaults(), clock);
+		CountingLeasedSaver saver = new CountingLeasedSaver(backend);
+		RunnableConfig config = config("callback-cleanup");
+		ExecutionLease lease = saver.acquireLease(config, UUID.randomUUID());
+		Scheduler timer = Schedulers.newSingle("lease-callback-test");
+		Scheduler rpc = Schedulers.newSingle("lease-callback-rpc-test");
+		AtomicInteger callbacks = new AtomicInteger();
+		try {
+			ExecutionLeaseScope scope = new ExecutionLeaseScope(saver, config, lease, System.nanoTime(),
+					System::nanoTime, timer, rpc);
+			AutoCloseable registration = scope.guard().onLoss(callbacks::incrementAndGet);
+			registration.close();
+
+			scope.invalidate(new LeaseLostException(lease.namespace(), lease.ownerId(), lease.fencingToken(),
+					"forced loss"));
+
+			assertEquals(0, callbacks.get());
+			scope.guard().onLoss(callbacks::incrementAndGet).close();
+			scope.invalidate(new LeaseLostException(lease.namespace(), lease.ownerId(), lease.fencingToken(),
+					"duplicate loss"));
+			assertEquals(1, callbacks.get());
+		}
+		finally {
+			timer.dispose();
+			rpc.dispose();
+		}
 	}
 
 	private static CompiledGraph immediateGraph(LeasedCheckpointSaver saver, AtomicInteger nodeCalls) throws Exception {
@@ -527,6 +654,16 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 				throw new AssertionError("Timed out waiting for counter; value=" + counter.get());
 			}
 			Thread.onSpinWait();
+		}
+	}
+
+	private static boolean awaitLatch(CountDownLatch latch) {
+		try {
+			return latch.await(5, TimeUnit.SECONDS);
+		}
+		catch (InterruptedException ex) {
+			Thread.currentThread().interrupt();
+			return false;
 		}
 	}
 
@@ -628,6 +765,92 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 
 	}
 
+	private static final class BlockingFirstReleaseSaver implements LeasedCheckpointSaver {
+
+		private final LeasedCheckpointSaver delegate;
+
+		private final AtomicInteger acquireCalls = new AtomicInteger();
+
+		private final AtomicInteger releaseCalls = new AtomicInteger();
+
+		private final CountDownLatch firstReleaseStarted = new CountDownLatch(1);
+
+		private final CountDownLatch allowFirstRelease = new CountDownLatch(1);
+
+		private final CountDownLatch secondAcquireStarted = new CountDownLatch(1);
+
+		private BlockingFirstReleaseSaver(LeasedCheckpointSaver delegate) {
+			this.delegate = delegate;
+		}
+
+		@Override
+		public LeaseOptions leaseOptions() {
+			return delegate.leaseOptions();
+		}
+
+		@Override
+		public ExecutionLease acquireLease(RunnableConfig config, UUID ownerId) throws Exception {
+			int call = acquireCalls.incrementAndGet();
+			if (call == 2) {
+				secondAcquireStarted.countDown();
+			}
+			return delegate.acquireLease(config, ownerId);
+		}
+
+		@Override
+		public ExecutionLease renewLease(RunnableConfig config, ExecutionLease lease) throws Exception {
+			return delegate.renewLease(config, lease);
+		}
+
+		@Override
+		public boolean releaseLease(RunnableConfig config, ExecutionLease lease) throws Exception {
+			int call = releaseCalls.incrementAndGet();
+			if (call == 1) {
+				firstReleaseStarted.countDown();
+				assertTrue(allowFirstRelease.await(5, TimeUnit.SECONDS));
+			}
+			return delegate.releaseLease(config, lease);
+		}
+
+		@Override
+		public RunnableConfig putIfLeasedVersion(RunnableConfig config, Checkpoint checkpoint, long expectedRevision,
+				ExecutionLease lease) throws Exception {
+			return delegate.putIfLeasedVersion(config, checkpoint, expectedRevision, lease);
+		}
+
+		@Override
+		public Tag releaseIfLeasedVersion(RunnableConfig config, long expectedRevision, ExecutionLease lease)
+				throws Exception {
+			return delegate.releaseIfLeasedVersion(config, expectedRevision, lease);
+		}
+
+		@Override
+		public CheckpointSnapshot getVersioned(RunnableConfig config) {
+			return delegate.getVersioned(config);
+		}
+
+		@Override
+		public Collection<Checkpoint> list(RunnableConfig config) {
+			return delegate.list(config);
+		}
+
+		@Override
+		public Optional<Checkpoint> get(RunnableConfig config) {
+			return delegate.get(config);
+		}
+
+		@Override
+		public RunnableConfig put(RunnableConfig config, Checkpoint checkpoint) throws Exception {
+			return LeasedCheckpointSaver.super.put(config, checkpoint);
+		}
+
+		@Override
+		public BaseCheckpointSaver.Tag release(RunnableConfig config) throws Exception {
+			return LeasedCheckpointSaver.super.release(config);
+		}
+
+	}
+
 	private static final class BlockingRenewSaver implements LeasedCheckpointSaver {
 
 		private final LeasedCheckpointSaver delegate;
@@ -637,6 +860,8 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 		private final CountDownLatch allowRenew = new CountDownLatch(1);
 
 		private final CountDownLatch renewReturned = new CountDownLatch(1);
+
+		private final AtomicInteger releaseCalls = new AtomicInteger();
 
 		private BlockingRenewSaver(LeasedCheckpointSaver delegate) {
 			this.delegate = delegate;
@@ -673,6 +898,7 @@ class ExecutionLeaseScopeCoreIntegrationTest {
 
 		@Override
 		public boolean releaseLease(RunnableConfig config, ExecutionLease lease) throws Exception {
+			releaseCalls.incrementAndGet();
 			return delegate.releaseLease(config, lease);
 		}
 
