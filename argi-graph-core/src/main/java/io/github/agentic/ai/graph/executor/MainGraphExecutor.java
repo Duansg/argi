@@ -57,6 +57,7 @@ public class MainGraphExecutor extends BaseGraphExecutor {
 	@Override
 	public Flux<GraphResponse<NodeOutput>> execute(GraphRunnerContext context, AtomicReference<Object> resultValue) {
 		try {
+			context.assertExecutionActive();
 			if (context.shouldStop()) {
 				return handleCompletion(context, resultValue);
 			}
@@ -130,6 +131,7 @@ public class MainGraphExecutor extends BaseGraphExecutor {
 	 */
 	private Flux<GraphResponse<NodeOutput>> handleStartNode(GraphRunnerContext context) {
 		try {
+			context.assertExecutionActive();
 			context.doListeners(START, null);
 			Command nextCommand = context.getEntryPoint();
 			context.setNextNodeId(nextCommand.gotoNode());
@@ -156,6 +158,7 @@ public class MainGraphExecutor extends BaseGraphExecutor {
 	private Flux<GraphResponse<NodeOutput>> handleEndNode(GraphRunnerContext context,
 			AtomicReference<Object> resultValue) {
 		try {
+			context.assertExecutionActive();
 			context.doListeners(END, null);
 			NodeOutput output = context.buildNodeOutput(END);
 			return Flux.just(GraphResponse.of(output),

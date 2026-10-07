@@ -16,6 +16,7 @@
 package io.github.agentic.ai.graph;
 
 import io.github.agentic.ai.graph.action.InterruptionMetadata;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
 import io.github.agentic.ai.graph.internal.node.ParallelNode;
 import io.github.agentic.ai.graph.store.Store;
 
@@ -26,6 +27,8 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
+
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 import static io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver.CHECKPOINTS_NUM_RETAINED;
 import static java.lang.String.format;
@@ -89,6 +92,9 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 
 	private final Map<String, Object> interruptedNodes;
 
+	@JsonIgnore
+	private final transient ExecutionGuard executionGuard;
+
 	/**
 	 * Creates a new instance of {@code RunnableConfig} as a copy of the provided
 	 * {@code config}.
@@ -103,6 +109,7 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		this.interruptedNodes = new ConcurrentHashMap<>();
 		this.store = builder.store;
 		this.context = builder.context;
+		this.executionGuard = builder.executionGuard;
 	}
 
 	public Store store() {
@@ -142,6 +149,24 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 	 */
 	public Optional<String> nextNode() {
 		return ofNullable(nextNode);
+	}
+
+	@JsonIgnore
+	public Optional<ExecutionGuard> executionGuard() {
+		return ofNullable(executionGuard);
+	}
+
+	public void assertExecutionActive() {
+		if (executionGuard != null) {
+			executionGuard.assertActive();
+		}
+	}
+
+	public RunnableConfig withoutExecutionGuard() {
+		if (executionGuard == null) {
+			return this;
+		}
+		return RunnableConfig.builder(this).executionGuard(null).build();
 	}
 
 	/**
@@ -330,6 +355,8 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 
 		private ConcurrentMap<String, Object> context;
 
+		private ExecutionGuard executionGuard;
+
 		private CompiledGraph.StreamMode streamMode = CompiledGraph.StreamMode.VALUES;
 
 		/**
@@ -354,6 +381,7 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 			this.streamMode = config.streamMode;
 			this.store = config.store;
 			this.context = new ConcurrentHashMap<>(config.context);
+			this.executionGuard = config.executionGuard;
 		}
 
 		/**
@@ -432,6 +460,11 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		 */
 		public Builder checkpointsNumRetained(int numRetained) {
 			return addMetadata(CHECKPOINTS_NUM_RETAINED, numRetained);
+		}
+
+		public Builder executionGuard(ExecutionGuard executionGuard) {
+			this.executionGuard = executionGuard;
+			return this;
 		}
 
 		public Builder addStateUpdate(Map<String, Object> stateUpdate) {

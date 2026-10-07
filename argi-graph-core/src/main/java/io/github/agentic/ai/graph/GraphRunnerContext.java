@@ -126,6 +126,7 @@ public class GraphRunnerContext {
 		} else {
 			initializeFromStart(initialState, config);
 		}
+		bindExecutionGuard();
 	}
 
 	private void initializeFromResume(OverAllState initialState, RunnableConfig config) throws Exception {
@@ -152,9 +153,11 @@ public class GraphRunnerContext {
 					// sub graph
 					.build();
 			this.config.clearContext();
+			bindExecutionGuard();
 		} else {
 			// Reset checkpoint id
 			this.config = config.withCheckPointId(null);
+			bindExecutionGuard();
 		}
 
 		this.currentNodeId = null;
@@ -344,9 +347,11 @@ public class GraphRunnerContext {
 					}
 					checkpointScope.validate(versionedSaver, appendConfig);
 					this.config = checkpointScope.put(appendConfig, cp);
+					bindExecutionGuard();
 				}
 				else {
 					this.config = saver.put(appendConfig, cp);
+					bindExecutionGuard();
 				}
 				return Optional.of(cp);
 			}
@@ -484,6 +489,7 @@ public class GraphRunnerContext {
 	// ================================================================================================================
 
 	public void doListeners(String scene, Exception e) {
+		assertExecutionActive();
 		for (GraphLifecycleListener listener : compiledGraph.compileConfig.lifecycleListeners()) {
 			try {
 				switch (scene) {
@@ -515,6 +521,7 @@ public class GraphRunnerContext {
 	 * @param updateState the state updates to apply
 	 */
 	public void mergeIntoCurrentState(Map<String, Object> updateState) {
+		assertExecutionActive();
 		// Create a new map and filter out ChatResponse entries
 		Map<String, Object> filteredState = findTokenUsageInDeltaState(updateState);
 
@@ -586,6 +593,21 @@ public class GraphRunnerContext {
 
 	public void setConfig(RunnableConfig config) {
 		this.config = config;
+		bindExecutionGuard();
+	}
+
+	public void assertExecutionActive() {
+		config.assertExecutionActive();
+	}
+
+	private void bindExecutionGuard() {
+		if (checkpointScope == null) {
+			this.config = this.config.withoutExecutionGuard();
+			return;
+		}
+		this.config = RunnableConfig.builder(this.config)
+			.executionGuard(checkpointScope.executionGuard().orElse(null))
+			.build();
 	}
 
 	public String getResumeFrom() {

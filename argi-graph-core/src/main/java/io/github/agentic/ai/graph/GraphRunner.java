@@ -17,8 +17,10 @@ package io.github.agentic.ai.graph;
 
 import io.github.agentic.ai.graph.executor.MainGraphExecutor;
 import io.github.agentic.ai.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.graph.checkpoint.LeasedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionLeaseScope;
 
 import reactor.core.publisher.Flux;
 
@@ -43,7 +45,7 @@ public class GraphRunner {
 
 	public GraphRunner(CompiledGraph compiledGraph, RunnableConfig config) {
 		this.compiledGraph = compiledGraph;
-		this.config = config;
+		this.config = config.withoutExecutionGuard();
 		// Initialize the main execution handler - demonstrates encapsulation
 		this.mainGraphExecutor = new MainGraphExecutor();
 	}
@@ -51,6 +53,12 @@ public class GraphRunner {
 	public Flux<GraphResponse<NodeOutput>> run(OverAllState initialState) {
 		return compiledGraph.compileConfig.checkpointSaver()
 			.map(saver -> CheckpointExecutionQueue.serialize(saver, config, () -> {
+				if (saver instanceof LeasedCheckpointSaver leasedSaver) {
+					return ExecutionLeaseScope.withLease(leasedSaver, config,
+							lease -> VersionedCheckpointScope.withScope(leasedSaver, config,
+									compiledGraph.stateGraph.getStateSerializer(),
+									scope -> runWithCheckpointLease(initialState, scope)));
+				}
 				if (saver instanceof VersionedCheckpointSaver versionedSaver) {
 					return VersionedCheckpointScope.withScope(versionedSaver, config,
 							compiledGraph.stateGraph.getStateSerializer(),

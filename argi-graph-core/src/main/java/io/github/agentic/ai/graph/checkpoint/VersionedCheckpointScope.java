@@ -17,6 +17,9 @@ package io.github.agentic.ai.graph.checkpoint;
 
 import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.StateGraph;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionLeaseScope;
+import io.github.agentic.ai.graph.checkpoint.lease.LeaseLostException;
 import io.github.agentic.ai.graph.serializer.StateSerializer;
 import io.github.agentic.ai.graph.serializer.check_point.CheckPointSerializer;
 
@@ -45,6 +48,8 @@ public final class VersionedCheckpointScope {
 
 	private final CheckPointSerializer checkpointSerializer;
 
+	private final ExecutionLeaseScope leaseScope;
+
 	private CheckpointSnapshot currentSnapshot;
 
 	private final CheckpointSnapshot preTurnSnapshot;
@@ -56,12 +61,15 @@ public final class VersionedCheckpointScope {
 	private CheckpointConflictException terminalConflict;
 
 	private VersionedCheckpointScope(VersionedCheckpointSaver saver, RunnableConfig config,
-			StateSerializer serializer) {
+			StateSerializer serializer, ExecutionLeaseScope leaseScope) {
 		this.saver = Objects.requireNonNull(saver, "saver cannot be null");
 		this.namespace = saver.checkpointThreadId(Objects.requireNonNull(config, "config cannot be null"));
 		this.checkpointSerializer = new CheckPointSerializer(
 				Objects.requireNonNull(serializer, "serializer cannot be null"));
+		this.leaseScope = leaseScope;
+		assertLeaseActive();
 		CheckpointSnapshot initialSnapshot = cloneSnapshotUnchecked(saver.getVersioned(config));
+		assertLeaseActive();
 		this.currentSnapshot = initialSnapshot;
 		this.preTurnSnapshot = cloneSnapshotUnchecked(initialSnapshot);
 		this.lastOwnRevision = currentSnapshot.revision();
@@ -83,13 +91,23 @@ public final class VersionedCheckpointScope {
 			Map<ScopeKey, VersionedCheckpointScope> inherited = context.getOrDefault(CONTEXT_KEY, Map.of());
 			VersionedCheckpointScope existing = inherited.get(key);
 			if (existing != null) {
+				existing.assertLeaseActive();
 				return Flux.defer(() -> operation.apply(existing));
 			}
-			VersionedCheckpointScope scope = new VersionedCheckpointScope(saver, config, serializer);
+			ExecutionLeaseScope leaseScope = null;
+			if (saver instanceof LeasedCheckpointSaver leasedSaver) {
+				leaseScope = ExecutionLeaseScope.current(context, leasedSaver, config)
+					.orElseThrow(() -> new IllegalStateException("Missing execution lease scope"));
+			}
+			VersionedCheckpointScope scope = new VersionedCheckpointScope(saver, config, serializer, leaseScope);
 			Map<ScopeKey, VersionedCheckpointScope> scopes = new HashMap<>(inherited);
 			scopes.put(key, scope);
 			return Flux.defer(() -> operation.apply(scope)).contextWrite(current -> current.put(CONTEXT_KEY, scopes));
 		});
+	}
+
+	public synchronized Optional<ExecutionGuard> executionGuard() {
+		return leaseScope == null ? Optional.empty() : Optional.of(leaseScope.guard());
 	}
 
 	public synchronized CheckpointSnapshot snapshot() {
@@ -99,13 +117,16 @@ public final class VersionedCheckpointScope {
 	public synchronized CheckpointSnapshot snapshot(RunnableConfig config) throws Exception {
 		validateNamespace(config);
 		failIfTerminated();
+		assertLeaseActive();
 		if (config.checkPointId().isEmpty() || currentSnapshot.checkpoint()
 			.map(Checkpoint::getId)
 			.filter(config.checkPointId().get()::equals)
 			.isPresent()) {
 			return cloneSnapshot(currentSnapshot);
 		}
+		assertLeaseActive();
 		CheckpointSnapshot selected = cloneSnapshot(saver.getVersioned(config));
+		assertLeaseActive();
 		if (selected.revision() != currentSnapshot.revision()) {
 			throw rememberConflict(new CheckpointConflictException(namespace, currentSnapshot.revision(),
 					selected.revision()));
@@ -124,15 +145,22 @@ public final class VersionedCheckpointScope {
 	public synchronized RunnableConfig put(RunnableConfig config, Checkpoint checkpoint) throws Exception {
 		validateNamespace(config);
 		failIfTerminated();
+		assertLeaseActive();
 		Checkpoint ownedCheckpoint = cloneCheckpoint(checkpoint);
 		long expectedRevision = currentSnapshot.revision();
 		long nextRevision = nextRevision(expectedRevision);
 		RunnableConfig updated;
 		try {
-			updated = saver.putIfVersion(config, ownedCheckpoint, expectedRevision);
+			updated = leaseScope != null && saver instanceof LeasedCheckpointSaver leasedSaver
+					? leasedSaver.putIfLeasedVersion(config, ownedCheckpoint, expectedRevision, leaseScope.lease())
+					: saver.putIfVersion(config, ownedCheckpoint, expectedRevision);
 		}
 		catch (CheckpointConflictException ex) {
 			throw rememberConflict(ex);
+		}
+		catch (LeaseLostException ex) {
+			invalidateLease(ex);
+			throw ex;
 		}
 		currentSnapshot = new CheckpointSnapshot(Optional.of(ownedCheckpoint), nextRevision);
 		ownMutation = true;
@@ -143,14 +171,21 @@ public final class VersionedCheckpointScope {
 	public synchronized BaseCheckpointSaver.Tag release(RunnableConfig config) throws Exception {
 		validateNamespace(config);
 		failIfTerminated();
+		assertLeaseActive();
 		long expectedRevision = currentSnapshot.revision();
 		long nextRevision = nextRevision(expectedRevision);
 		BaseCheckpointSaver.Tag tag;
 		try {
-			tag = saver.releaseIfVersion(config, expectedRevision);
+			tag = leaseScope != null && saver instanceof LeasedCheckpointSaver leasedSaver
+					? leasedSaver.releaseIfLeasedVersion(config, expectedRevision, leaseScope.lease())
+					: saver.releaseIfVersion(config, expectedRevision);
 		}
 		catch (CheckpointConflictException ex) {
 			throw rememberConflict(ex);
+		}
+		catch (LeaseLostException ex) {
+			invalidateLease(ex);
+			throw ex;
 		}
 		currentSnapshot = new CheckpointSnapshot(Optional.empty(), nextRevision);
 		ownMutation = true;
@@ -161,6 +196,7 @@ public final class VersionedCheckpointScope {
 	public synchronized void rewind(RunnableConfig config) throws Exception {
 		validateNamespace(config);
 		failIfTerminated();
+		assertLeaseActive();
 		if (!ownMutation) {
 			return;
 		}
@@ -169,7 +205,12 @@ public final class VersionedCheckpointScope {
 			Checkpoint rewindCheckpoint = preTurnSnapshot.checkpoint()
 				.orElseGet(() -> Checkpoint.builder().state(Map.of()).nodeId(START).nextNodeId(END).build());
 			Checkpoint ownedCheckpoint = cloneCheckpoint(rewindCheckpoint);
-			saver.putIfVersion(config, ownedCheckpoint, lastOwnRevision);
+			if (leaseScope != null && saver instanceof LeasedCheckpointSaver leasedSaver) {
+				leasedSaver.putIfLeasedVersion(config, ownedCheckpoint, lastOwnRevision, leaseScope.lease());
+			}
+			else {
+				saver.putIfVersion(config, ownedCheckpoint, lastOwnRevision);
+			}
 			currentSnapshot = new CheckpointSnapshot(Optional.of(ownedCheckpoint), nextRevision);
 			lastOwnRevision = nextRevision;
 			ownMutation = false;
@@ -178,6 +219,10 @@ public final class VersionedCheckpointScope {
 			rememberConflict(ex);
 			// A newer owner has already moved the namespace; never reload or blind-rewind it.
 		}
+		catch (LeaseLostException ex) {
+			invalidateLease(ex);
+			throw ex;
+		}
 	}
 
 	public void validate(VersionedCheckpointSaver expectedSaver, RunnableConfig config) {
@@ -185,6 +230,19 @@ public final class VersionedCheckpointScope {
 			throw new IllegalArgumentException("scope belongs to a different checkpoint saver");
 		}
 		validateNamespace(config);
+		assertLeaseActive();
+	}
+
+	private void assertLeaseActive() {
+		if (leaseScope != null) {
+			leaseScope.assertActive();
+		}
+	}
+
+	private void invalidateLease(LeaseLostException ex) {
+		if (leaseScope != null) {
+			leaseScope.invalidate(ex);
+		}
 	}
 
 	private void validateNamespace(RunnableConfig config) {

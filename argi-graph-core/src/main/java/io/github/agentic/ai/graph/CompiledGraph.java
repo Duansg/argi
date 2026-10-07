@@ -19,8 +19,10 @@ import io.github.agentic.ai.graph.action.AsyncNodeActionWithConfig;
 import io.github.agentic.ai.graph.action.Command;
 import io.github.agentic.ai.graph.checkpoint.BaseCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.graph.checkpoint.LeasedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointSaver;
 import io.github.agentic.ai.graph.checkpoint.VersionedCheckpointScope;
+import io.github.agentic.ai.graph.checkpoint.lease.ExecutionLeaseScope;
 import io.github.agentic.ai.graph.exception.Errors;
 import io.github.agentic.ai.graph.exception.GraphStateException;
 import io.github.agentic.ai.graph.exception.RunnableErrors;
@@ -262,7 +264,8 @@ public class CompiledGraph {
 
 		return saver.list(config)
 				.stream()
-				.map(checkpoint -> StateSnapshot.of(keyStrategyMap, checkpoint, config, stateGraph.getStateFactory()))
+				.map(checkpoint -> StateSnapshot.of(keyStrategyMap, checkpoint, config.withoutExecutionGuard(),
+						stateGraph.getStateFactory()))
 				.collect(toList());
 	}
 
@@ -293,7 +296,8 @@ public class CompiledGraph {
 				.orElseThrow(() -> (new IllegalStateException("Missing CheckpointSaver!")));
 
 		return saver.get(config)
-				.map(checkpoint -> StateSnapshot.of(keyStrategyMap, checkpoint, config, stateGraph.getStateFactory()));
+				.map(checkpoint -> StateSnapshot.of(keyStrategyMap, checkpoint, config.withoutExecutionGuard(),
+						stateGraph.getStateFactory()));
 
 	}
 
@@ -313,36 +317,54 @@ public class CompiledGraph {
 			throws Exception {
 		BaseCheckpointSaver saver = compileConfig.checkpointSaver()
 				.orElseThrow(() -> (new IllegalStateException("Missing CheckpointSaver!")));
+		RunnableConfig publicConfig = config.withoutExecutionGuard();
 		if (saver instanceof VersionedCheckpointSaver versionedSaver) {
-			return VersionedCheckpointScope.withScope(versionedSaver, config, stateGraph.getStateSerializer(),
-					scope -> Flux.defer(() -> {
+			Flux<RunnableConfig> update = VersionedCheckpointScope.withScope(versionedSaver, publicConfig,
+					stateGraph.getStateSerializer(), scope -> Flux.defer(() -> {
 				try {
-					return Flux.just(updateState(config, values, asNode, scope));
+					return Flux.just(updateState(publicConfig, values, asNode, scope));
 				}
 				catch (Exception ex) {
 					return Flux.error(ex);
 				}
-			})).single().block();
+			}));
+			if (saver instanceof LeasedCheckpointSaver leasedSaver) {
+				update = ExecutionLeaseScope.withLease(leasedSaver, publicConfig,
+						lease -> VersionedCheckpointScope.withScope(leasedSaver, publicConfig,
+								stateGraph.getStateSerializer(), scope -> Flux.defer(() -> {
+									try {
+										return Flux.just(updateState(publicConfig, values, asNode, scope));
+									}
+									catch (Exception ex) {
+										return Flux.error(ex);
+									}
+								})));
+			}
+			return update.single().block().withoutExecutionGuard();
 		}
 
 		// merge values with checkpoint values
-		Checkpoint branchCheckpoint = saver.get(config)
+		Checkpoint branchCheckpoint = saver.get(publicConfig)
 				.map(Checkpoint::copyOf)
 				.map(cp -> cp.updateState(values, keyStrategyMap))
 				.orElseThrow(() -> (new IllegalStateException("Missing Checkpoint!")));
 
 		String nextNodeId = null;
 		if (asNode != null) {
-			var nextNodeCommand = nextNodeId(asNode, branchCheckpoint.getState(), config);
+			var nextNodeCommand = nextNodeId(asNode, branchCheckpoint.getState(), publicConfig);
 
 			nextNodeId = nextNodeCommand.gotoNode();
 			branchCheckpoint = branchCheckpoint.updateState(nextNodeCommand.update(), keyStrategyMap);
 
 		}
 		// update checkpoint in saver
-		RunnableConfig newConfig = saver.put(config, branchCheckpoint);
+		RunnableConfig newConfig = saver.put(publicConfig, branchCheckpoint);
 
-		return RunnableConfig.builder(newConfig).checkPointId(branchCheckpoint.getId()).nextNode(nextNodeId).build();
+		return RunnableConfig.builder(newConfig)
+			.checkPointId(branchCheckpoint.getId())
+			.nextNode(nextNodeId)
+			.build()
+			.withoutExecutionGuard();
 	}
 
 	public RunnableConfig updateState(RunnableConfig config, Map<String, Object> values, String asNode,

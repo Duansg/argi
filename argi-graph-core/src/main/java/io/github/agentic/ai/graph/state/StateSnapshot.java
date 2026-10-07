@@ -54,7 +54,8 @@ public final class StateSnapshot extends NodeOutput {
 		RunnableConfig newConfig = RunnableConfig.builder(config)
 			.checkPointId(checkpoint.getId())
 			.nextNode(checkpoint.getNextNodeId())
-			.build();
+			.build()
+			.withoutExecutionGuard();
 		return new StateSnapshot(checkpoint.getNodeId(),
 				factory.apply(checkpoint.getState()).registerKeyAndStrategy(keyStrategyMap), newConfig);
 	}
@@ -65,7 +66,8 @@ public final class StateSnapshot extends NodeOutput {
 		RunnableConfig newConfig = RunnableConfig.builder(config)
 			.checkPointId(checkpoint.getId())
 			.nextNode(checkpoint.getNextNodeId())
-			.build();
+			.build()
+			.withoutExecutionGuard();
 		return new StateSnapshot(checkpoint.getNodeId(),
 				factory.apply(checkpoint.getState()).registerKeyAndStrategy(overAllState.keyStrategies()), newConfig);
 	}

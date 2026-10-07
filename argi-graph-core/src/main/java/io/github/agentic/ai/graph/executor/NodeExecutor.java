@@ -103,6 +103,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 	private Flux<GraphResponse<NodeOutput>> executeNode(GraphRunnerContext context,
 			AtomicReference<Object> resultValue) {
 		try {
+			context.assertExecutionActive();
 			context.setCurrentNodeId(context.getNextNodeId());
 			String currentNodeId = context.getCurrentNodeId();
 			AsyncNodeActionWithConfig action = context.getNodeAction(currentNodeId);
@@ -112,6 +113,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 			}
 
 			if (action instanceof InterruptableAction) {
+				context.assertExecutionActive();
 				context.getConfig().metadata(RunnableConfig.STATE_UPDATE_METADATA_KEY).ifPresent(updateFromFeedback -> {
 					if (updateFromFeedback instanceof Map<?, ?>) {
 						context.mergeIntoCurrentState((Map<String, Object>) updateFromFeedback);
@@ -129,6 +131,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 
 			context.doListeners(NODE_BEFORE, null);
 
+			context.assertExecutionActive();
 			CompletableFuture<Map<String, Object>> future = action.apply(context.getOverallState(),
 					context.getConfig());
 
@@ -155,6 +158,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 	private Flux<GraphResponse<NodeOutput>> handleActionResult(GraphRunnerContext context,
 			Map<String, Object> updateState, AtomicReference<Object> resultValue) {
 		try {
+			context.assertExecutionActive();
 
 			// Check for Flux
 			Optional<Flux<GraphResponse<NodeOutput>>> embedFlux = getEmbedFlux(context, updateState);
@@ -178,6 +182,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 			String currentNodeId = context.getCurrentNodeId();
 			AsyncNodeActionWithConfig action = context.getNodeAction(currentNodeId);
 			if (action instanceof InterruptableAction) {
+				context.assertExecutionActive();
 				Optional<InterruptionMetadata> interruptMetadata = ((InterruptableAction) action)
 					.interruptAfter(currentNodeId, context.cloneState(context.getCurrentStateData()),
 						updateState, context.getConfig());
@@ -197,6 +202,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 				}
 			}
 
+			context.assertExecutionActive();
 			context.mergeIntoCurrentState(updateState);
 
 			if (context.getCompiledGraph().compileConfig.interruptBeforeEdge()
@@ -210,6 +216,7 @@ public class NodeExecutor extends BaseGraphExecutor {
 			}
 			NodeOutput output = context.buildNodeOutputAndAddCheckpoint(updateState);
 
+			context.assertExecutionActive();
 			context.doListeners(NODE_AFTER, null);
 			// Continue with the main execution handler (expanded iteratively by GraphRunner)
 			return Flux.just(GraphResponse.of(output),
