@@ -72,3 +72,50 @@ the ordinary compiler/builder defaults.
 Observation handlers and exporters must also be configured by the application.
 An absent registry falls back to `ObservationRegistry.NOOP`; the starter does
 not configure an OpenTelemetry collector or a tracing exporter.
+
+## Cross-Agent Trace Correlation (opt-in)
+
+Graph/node observations alone do not connect calls across agent boundaries
+(delegation, A2A send/receive, background task retrieval, run store commits).
+Those links come from the opt-in `AgentTracer` in `argi-graph-core`
+(`io.github.agentic.ai.graph.observation.trace`); see the graph-core README for
+the span model, correlation keys and privacy defaults.
+
+The starter intentionally adds **no new configuration keys**: constructing and
+passing an `AgentTracer` is the only way to enable it, and the historical
+behavior of `TaskTool`, `TaskOutputTool`, `A2aRemoteAgent` and `RunStore` is
+preserved unchanged when no tracer is supplied. Wire the tracer by hand against
+the registry the starter already manages:
+
+```java
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
+import io.github.agentic.ai.graph.execution.run.ObservedRunStore;
+import io.github.agentic.ai.graph.agent.tools.task.TaskToolsBuilder;
+import io.github.agentic.ai.graph.agent.a2a.A2aRemoteAgent;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration(proxyBeanMethods = false)
+class TraceConfiguration {
+
+    @Bean
+    AgentTracer agentTracer(ObservationRegistry observationRegistry) {
+        return new AgentTracer(observationRegistry); // NOOP registry = disabled
+    }
+
+    @Bean
+    TaskToolsBuilder taskTools(AgentTracer agentTracer) {
+        return TaskToolsBuilder.builder().agentTracer(agentTracer);
+    }
+
+    @Bean
+    A2aRemoteAgent remoteAgent(AgentTracer agentTracer) {
+        return A2aRemoteAgent.builder().agentTracer(agentTracer).build();
+    }
+
+    @Bean
+    RunStore observedRunStore(RunStore runStore, AgentTracer agentTracer) {
+        return new ObservedRunStore(runStore, agentTracer);
+    }
+}
+```

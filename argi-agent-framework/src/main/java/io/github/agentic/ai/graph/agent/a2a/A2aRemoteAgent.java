@@ -28,6 +28,7 @@ import io.github.agentic.ai.graph.internal.node.Node;
 import io.github.agentic.ai.graph.scheduling.ScheduleConfig;
 import io.github.agentic.ai.graph.scheduling.ScheduledAgentTask;
 import io.github.agentic.ai.graph.state.strategy.AppendStrategy;
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
 import io.a2a.spec.AgentCard;
 
 import java.util.HashMap;
@@ -50,6 +51,8 @@ public class A2aRemoteAgent extends BaseAgent {
 
 	private boolean shareState;
 
+	private AgentTracer agentTracer;
+
 	// Private constructor for Builder pattern
 	private A2aRemoteAgent(Builder builder) {
 		super(builder.name, builder.description, builder.includeContents, builder.returnReasoningContents, builder.outputKey, builder.outputKeyStrategy);
@@ -60,6 +63,7 @@ public class A2aRemoteAgent extends BaseAgent {
 		this.streaming = builder.streaming;
 		this.instruction = builder.instruction;
 		this.shareState = builder.shareState;
+		this.agentTracer = builder.agentTracer;
 	}
 
 	@Override
@@ -75,7 +79,7 @@ public class A2aRemoteAgent extends BaseAgent {
 		StateGraph graph = new StateGraph(name, this.keyStrategyFactory);
 		graph.addNode("A2aNode", AsyncNodeActionWithConfig.node_async(
 				new A2aNodeActionWithConfig(agentCard, name, includeContents, outputKey, instruction, streaming,
-						this.shareState, this.compileConfig)));
+						this.shareState, this.compileConfig, this.agentTracer)));
 		graph.addEdge(StateGraph.START, "A2aNode");
 		graph.addEdge("A2aNode", StateGraph.END);
 		return graph;
@@ -106,7 +110,7 @@ public class A2aRemoteAgent extends BaseAgent {
 
 		public A2aRemoteAgentNode(String id, boolean includeContents, boolean returnReasoningContents, String instruction, AgentCardWrapper agentCard, boolean streaming, boolean shareState, CompiledGraph subGraph) {
 			super(Objects.requireNonNull(id, "id cannot be null"),
-					(config) -> AsyncNodeActionWithConfig.node_async(new A2aNodeActionWithConfig(agentCard, subGraph.stateGraph.getName(), includeContents, A2aRemoteAgent.this.outputKey, instruction, streaming, shareState, config)));
+					(config) -> AsyncNodeActionWithConfig.node_async(new A2aNodeActionWithConfig(agentCard, subGraph.stateGraph.getName(), includeContents, A2aRemoteAgent.this.outputKey, instruction, streaming, shareState, config, A2aRemoteAgent.this.agentTracer)));
 			this.subGraph = subGraph;
 		}
 
@@ -145,6 +149,8 @@ public class A2aRemoteAgent extends BaseAgent {
 		private boolean streaming = false;
 
 		private boolean shareState = true;
+
+		private AgentTracer agentTracer;
 
 		public Builder name(String name) {
 			this.name = name;
@@ -198,6 +204,18 @@ public class A2aRemoteAgent extends BaseAgent {
 
 		public Builder compileConfig(CompileConfig compileConfig) {
 			this.compileConfig = compileConfig;
+			return this;
+		}
+
+		/**
+		 * Enable cross-agent trace correlation for the remote calls with the given tracer.
+		 * The tracer is an explicit opt-in; when omitted, no observation is emitted and no
+		 * trace metadata is added to the A2A requests.
+		 * @param agentTracer the cross-agent tracer, may be null
+		 * @return this builder
+		 */
+		public Builder agentTracer(AgentTracer agentTracer) {
+			this.agentTracer = agentTracer;
 			return this;
 		}
 

@@ -38,6 +38,10 @@ import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
 import io.github.agentic.ai.graph.utils.PromptTemplate;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceContext;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceOperation;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceSpan;
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
 import org.springframework.util.StringUtils;
 
 import java.io.BufferedReader;
@@ -79,6 +83,8 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 
 	private CompileConfig parentCompileConfig;
 
+	private AgentTracer agentTracer;
+
 	public A2aNodeActionWithConfig(AgentCardWrapper agentCard, String agentName, boolean includeContents,
 			String outputKeyToParent, String instruction, boolean streaming) {
 		this.agentName = agentName;
@@ -90,6 +96,24 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		this.shareState = false;
 	}
 
+	/**
+	 * Create the node action with optional cross-agent trace correlation. The tracer is an
+	 * explicit opt-in; with a null tracer the historical behavior is preserved exactly and
+	 * no observation is emitted and no trace metadata is added to A2A requests.
+	 * @param agentCard the remote agent card
+	 * @param agentName the local agent name
+	 * @param includeContents whether to include contents
+	 * @param outputKeyToParent the output key written back to the parent state
+	 * @param instruction the instruction template
+	 * @param streaming whether to use the streaming endpoint
+	 * @param agentTracer the cross-agent tracer, may be null
+	 */
+	public A2aNodeActionWithConfig(AgentCardWrapper agentCard, String agentName, boolean includeContents,
+			String outputKeyToParent, String instruction, boolean streaming, AgentTracer agentTracer) {
+		this(agentCard, agentName, includeContents, outputKeyToParent, instruction, streaming);
+		this.agentTracer = agentTracer;
+	}
+
 	public A2aNodeActionWithConfig(AgentCardWrapper agentCard, String agentName, boolean includeContents,
 			String outputKeyToParent, String instruction, boolean streaming, boolean shareState,
 			CompileConfig compileConfig) {
@@ -98,22 +122,80 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		this.shareState = shareState;
 	}
 
+	/**
+	 * Create the node action with shared state and optional cross-agent trace correlation.
+	 * @param agentCard the remote agent card
+	 * @param agentName the local agent name
+	 * @param includeContents whether to include contents
+	 * @param outputKeyToParent the output key written back to the parent state
+	 * @param instruction the instruction template
+	 * @param streaming whether to use the streaming endpoint
+	 * @param shareState whether to share the parent state
+	 * @param compileConfig the parent compile config
+	 * @param agentTracer the cross-agent tracer, may be null
+	 */
+	public A2aNodeActionWithConfig(AgentCardWrapper agentCard, String agentName, boolean includeContents,
+			String outputKeyToParent, String instruction, boolean streaming, boolean shareState,
+			CompileConfig compileConfig, AgentTracer agentTracer) {
+		this(agentCard, agentName, includeContents, outputKeyToParent, instruction, streaming, shareState,
+				compileConfig);
+		this.agentTracer = agentTracer;
+	}
+
 	@Override
 	public Map<String, Object> apply(OverAllState state, RunnableConfig config) throws Exception {
 		RunnableConfig subGraphRunnableConfig = getSubGraphRunnableConfig(config);
+		AgentTraceContext context = traceContext(subGraphRunnableConfig, state);
+		if (context != null) {
+			context = context.withDelegationId(UUID.randomUUID().toString());
+		}
 		if (streaming) {
-			AsyncGenerator<NodeOutput> generator = createStreamingGenerator(state, subGraphRunnableConfig);
+			AsyncGenerator<NodeOutput> generator = createStreamingGenerator(state, subGraphRunnableConfig, context);
 			// Convert AsyncGenerator to Flux using the new toFlux() method
 			Flux<GraphResponse<NodeOutput>> flux = toFlux(generator);
 			return Map.of(StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages", flux);
 		}
 		else {
-			String requestPayload = buildSendMessageRequest(state, subGraphRunnableConfig);
+			String requestPayload = buildSendMessageRequest(state, subGraphRunnableConfig, context);
+			String resultText = sendRequest(requestPayload, context);
+			try (AgentTraceSpan receiveSpan = startSpan(AgentTraceOperation.A2A_RECEIVE, context).role("consumer")) {
+				Map<String, Object> resultMap = autoDetectAndParseResponse(resultText);
+				Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
+				String responseText = extractResponseText(result);
+				receiveSpan.success();
+				return buildFinalResult(this.outputKeyToParent, responseText);
+			}
+		}
+	}
+
+	private boolean tracing() {
+		return this.agentTracer != null && this.agentTracer.isEnabled();
+	}
+
+	private AgentTraceContext traceContext(RunnableConfig config, OverAllState state) {
+		return tracing() ? AgentTraceContext.capture(config, state != null ? state.data() : null) : null;
+	}
+
+	private AgentTraceSpan startSpan(AgentTraceOperation operation, AgentTraceContext context) {
+		return tracing() ? this.agentTracer.start(operation, context) : AgentTraceSpan.disabled();
+	}
+
+	private String sendRequest(String requestPayload, AgentTraceContext context) throws Exception {
+		if (!tracing()) {
+			return sendMessageToServer(this.agentCard, requestPayload);
+		}
+		AgentTraceSpan sendSpan = startSpan(AgentTraceOperation.A2A_SEND, context).role("producer");
+		try {
 			String resultText = sendMessageToServer(this.agentCard, requestPayload);
-			Map<String, Object> resultMap = autoDetectAndParseResponse(resultText);
-			Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
-			String responseText = extractResponseText(result);
-			return buildFinalResult(this.outputKeyToParent, responseText);
+			sendSpan.success();
+			return resultText;
+		}
+		catch (Exception e) {
+			sendSpan.error(e);
+			throw e;
+		}
+		finally {
+			sendSpan.close();
 		}
 	}
 
@@ -222,9 +304,9 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 	/**
 	 * Create a streaming generator.
 	 */
-	private AsyncGenerator<NodeOutput> createStreamingGenerator(OverAllState state, RunnableConfig config)
-			throws Exception {
-		final String requestPayload = buildSendStreamingMessageRequest(state, config);
+	private AsyncGenerator<NodeOutput> createStreamingGenerator(OverAllState state, RunnableConfig config,
+			AgentTraceContext context) throws Exception {
+		final String requestPayload = buildSendStreamingMessageRequest(state, config, context);
 		final BlockingQueue<AsyncGenerator.Data<NodeOutput>> queue = new LinkedBlockingQueue<>(1000);
 		final String outputKey = StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages";
 		final StringBuilder accumulated = new StringBuilder();
@@ -243,73 +325,100 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 				post.setHeader("Accept", "text/event-stream");
 				post.setEntity(new StringEntity(requestPayload, ContentType.APPLICATION_JSON));
 
-				httpClient.execute(post, response -> {
-					int statusCode = response.getCode();
-					if (statusCode != 200) {
-						StreamingOutput errorOutput = buildStreamingOutput("HTTP request failed, status: " + statusCode,
-								state);
-						queue.add(AsyncGenerator.Data.of(errorOutput));
-						return null;
-					}
+				// The worker thread has no ambient observation, so the producer context is
+				// carried explicitly through the captured trace context and linked through
+				// the shared delegation id instead of a parent/child relationship.
+				AgentTraceSpan sendSpan = startSpan(AgentTraceOperation.A2A_SEND, context).role("producer");
+				try {
+					httpClient.execute(post, response -> {
+						int statusCode = response.getCode();
+						if (statusCode != 200) {
+							StreamingOutput errorOutput = buildStreamingOutput("HTTP request failed, status: "
+									+ statusCode, state);
+							queue.add(AsyncGenerator.Data.of(errorOutput));
+							return null;
+						}
 
-					HttpEntity entity = response.getEntity();
-					if (entity == null) {
-						StreamingOutput errorOutput = buildStreamingOutput("Empty HTTP entity", state);
-						queue.add(AsyncGenerator.Data.of(errorOutput));
-						return null;
-					}
+						HttpEntity entity = response.getEntity();
+						if (entity == null) {
+							StreamingOutput errorOutput = buildStreamingOutput("Empty HTTP entity", state);
+							queue.add(AsyncGenerator.Data.of(errorOutput));
+							return null;
+						}
 
-					String contentType = entity.getContentType() != null ? entity.getContentType() : "";
-					boolean isEventStream = contentType.contains("text/event-stream");
+						String contentType = entity.getContentType() != null ? entity.getContentType() : "";
+						boolean isEventStream = contentType.contains("text/event-stream");
 
-					if (isEventStream) {
-						try (BufferedReader reader = new BufferedReader(
-								new InputStreamReader(entity.getContent(), StandardCharsets.UTF_8))) {
-							String line;
-							while ((line = reader.readLine()) != null) {
-								String trimmed = line.trim();
-								if (!trimmed.startsWith("data:")) {
-									continue;
-								}
-								String jsonContent = trimmed.substring(5).trim();
-								if ("[DONE]".equals(jsonContent)) {
-									break;
-								}
-								try {
-									Map<String, Object> parsed = parseJsonMap(jsonContent);
-									Map<String, Object> result = (Map<String, Object>) parsed.get("result");
-									if (result != null) {
-										String text = extractResponseText(result);
-										if (text != null && !text.isEmpty()) {
-											accumulated.append(text);
-											queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
+						AgentTraceSpan receiveSpan = startSpan(AgentTraceOperation.A2A_RECEIVE, context)
+							.role("consumer");
+						try {
+							if (isEventStream) {
+								try (BufferedReader reader = new BufferedReader(
+										new InputStreamReader(entity.getContent(), StandardCharsets.UTF_8))) {
+									String line;
+									while ((line = reader.readLine()) != null) {
+										String trimmed = line.trim();
+										if (!trimmed.startsWith("data:")) {
+											continue;
+										}
+										String jsonContent = trimmed.substring(5).trim();
+										if ("[DONE]".equals(jsonContent)) {
+											break;
+										}
+										try {
+											Map<String, Object> parsed = parseJsonMap(jsonContent);
+											Map<String, Object> result = (Map<String, Object>) parsed.get("result");
+											if (result != null) {
+												String text = extractResponseText(result);
+												if (text != null && !text.isEmpty()) {
+													accumulated.append(text);
+													queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
+												}
+											}
+										}
+										catch (Exception ignore) {
 										}
 									}
 								}
-								catch (Exception ignore) {
+							}
+							else {
+								// Non-SSE: read the full body and emit a single output
+								String body = EntityUtils.toString(entity, "UTF-8");
+								try {
+									Map<String, Object> resultMap = parseJsonMap(body);
+									Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
+									String text = extractResponseText(result);
+									if (text != null && !text.isEmpty()) {
+										accumulated.append(text);
+										queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
+									}
+								}
+								catch (Exception ex) {
+									receiveSpan.error(ex);
+									queue.add(AsyncGenerator.Data
+										.of(buildStreamingOutput("Error: " + ex.getMessage(), state)));
 								}
 							}
-						}
-					}
-					else {
-						// Non-SSE: read the full body and emit a single output
-						String body = EntityUtils.toString(entity, "UTF-8");
-						try {
-							Map<String, Object> resultMap = parseJsonMap(body);
-							Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
-							String text = extractResponseText(result);
-							if (text != null && !text.isEmpty()) {
-								accumulated.append(text);
-								queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
-							}
+							receiveSpan.success();
 						}
 						catch (Exception ex) {
-							queue.add(AsyncGenerator.Data.of(buildStreamingOutput("Error: " + ex.getMessage(), state)));
+							receiveSpan.error(ex);
+							throw ex;
 						}
-					}
-
-					return null;
-				});
+						finally {
+							receiveSpan.close();
+						}
+						return null;
+					});
+					sendSpan.success();
+				}
+				catch (Exception e) {
+					sendSpan.error(e);
+					throw e;
+				}
+				finally {
+					sendSpan.close();
+				}
 			}
 			catch (Exception e) {
 				StreamingOutput errorOutput = buildStreamingOutput("Error: " + e.getMessage(), state);
@@ -684,9 +793,11 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 	/**
 	 * Build the JSON-RPC request payload to send to the A2A server.
 	 * @param state Parent state
+	 * @param config the invocation-local config
+	 * @param context the cross-agent trace context, or null when tracing is disabled
 	 * @return JSON string payload (e.g., JSON-RPC params)
 	 */
-	private String buildSendMessageRequest(OverAllState state, RunnableConfig config) {
+	private String buildSendMessageRequest(OverAllState state, RunnableConfig config, AgentTraceContext context) {
 		Object textValue = getEffectiveInstruction(state);
 		String text = String.valueOf(textValue);
 
@@ -708,6 +819,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		config.threadId().ifPresent(threadId -> metadata.put("threadId", threadId));
 		// FIXME, the key 'userId' should be configurable
 		config.metadata("userId").ifPresent(userId -> metadata.put("userId", userId));
+		putTraceMetadata(metadata, context);
 		params.put("metadata", metadata);
 
 		Map<String, Object> root = new HashMap<>();
@@ -727,9 +839,12 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 	/**
 	 * Build the JSON-RPC streaming request payload (method: message/stream).
 	 * @param state Parent state
+	 * @param config the invocation-local config
+	 * @param context the cross-agent trace context, or null when tracing is disabled
 	 * @return JSON string payload for streaming
 	 */
-	private String buildSendStreamingMessageRequest(OverAllState state, RunnableConfig config) {
+	private String buildSendStreamingMessageRequest(OverAllState state, RunnableConfig config,
+			AgentTraceContext context) {
 		Object textValue = getEffectiveInstruction(state);
 		String text = String.valueOf(textValue);
 
@@ -751,6 +866,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		config.threadId().ifPresent(threadId -> metadata.put("threadId", threadId));
 		// FIXME, the key 'userId' should be configurable
 		config.metadata("userId").ifPresent(userId -> metadata.put("userId", userId));
+		putTraceMetadata(metadata, context);
 		params.put("metadata", metadata);
 
 		Map<String, Object> root = new HashMap<>();
@@ -764,6 +880,35 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		}
 		catch (Exception e) {
 			throw new IllegalStateException("Failed to build JSON-RPC streaming payload", e);
+		}
+	}
+
+	/**
+	 * Propagate the producer trace context to the remote side through the A2A request
+	 * metadata, so a remote ARGI runtime can correlate its consumer spans with this
+	 * delegation. Only non-null facts are written; nothing is added when tracing is
+	 * disabled.
+	 * @param metadata the A2A request metadata map
+	 * @param context the cross-agent trace context, or null when tracing is disabled
+	 */
+	private void putTraceMetadata(Map<String, Object> metadata, AgentTraceContext context) {
+		if (context == null) {
+			return;
+		}
+		if (context.runId() != null) {
+			metadata.put("argiRunId", context.runId());
+		}
+		if (context.tenant() != null) {
+			metadata.put("argiTenant", context.tenant());
+		}
+		if (context.attemptId() != null) {
+			metadata.put("argiAttemptId", context.attemptId());
+		}
+		if (context.threadId() != null) {
+			metadata.put("argiThreadId", context.threadId());
+		}
+		if (context.delegationId() != null) {
+			metadata.put("argiDelegationId", context.delegationId());
 		}
 	}
 

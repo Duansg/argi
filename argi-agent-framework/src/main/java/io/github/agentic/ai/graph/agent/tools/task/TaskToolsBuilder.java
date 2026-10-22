@@ -24,6 +24,7 @@ import java.util.Map;
 import io.github.agentic.ai.graph.agent.ReactAgent;
 import io.github.agentic.ai.api.chat.ChatClient;
 import io.github.agentic.ai.api.tool.Tool;
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
 import org.springframework.core.io.Resource;
 import org.springframework.util.Assert;
 import org.springframework.util.StringUtils;
@@ -73,6 +74,8 @@ public final class TaskToolsBuilder {
 	private ChatClient chatClient;
 
 	private final List<Tool> defaultTools = new ArrayList<>();
+
+	private AgentTracer agentTracer;
 
 	private TaskToolsBuilder() {
 	}
@@ -169,6 +172,16 @@ public final class TaskToolsBuilder {
 	}
 
 	/**
+	 * Enable cross-agent trace correlation for both tools with the given tracer. The tracer
+	 * is an explicit opt-in; when omitted, no observation is emitted and the historical
+	 * behavior is preserved exactly.
+	 */
+	public TaskToolsBuilder agentTracer(AgentTracer agentTracer) {
+		this.agentTracer = agentTracer;
+		return this;
+	}
+
+	/**
 	 * Build both TaskTool and TaskOutputTool as neutral tools.
 	 */
 	public List<Tool> build() {
@@ -177,9 +190,19 @@ public final class TaskToolsBuilder {
 		Map<String, ReactAgent> resolved = resolveSubAgents();
 		Assert.notEmpty(resolved, "At least one sub-agent must be configured (via subAgents or addAgentDirectory)");
 
+		TaskTraceCorrelation traceCorrelation = this.agentTracer != null ? new TaskTraceCorrelation() : null;
 		List<Tool> tools = new ArrayList<>();
-		tools.add(TaskTool.builder().subAgents(resolved).taskRepository(this.taskRepository).build());
-		tools.add(TaskOutputTool.builder().taskRepository(this.taskRepository).build());
+		tools.add(TaskTool.builder()
+			.subAgents(resolved)
+			.taskRepository(this.taskRepository)
+			.agentTracer(this.agentTracer)
+			.traceCorrelation(traceCorrelation)
+			.build());
+		tools.add(TaskOutputTool.builder()
+			.taskRepository(this.taskRepository)
+			.agentTracer(this.agentTracer)
+			.traceCorrelation(traceCorrelation)
+			.build());
 		return List.copyOf(tools);
 	}
 

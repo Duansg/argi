@@ -22,9 +22,15 @@ import io.github.agentic.ai.api.tool.ToolContext;
 import io.github.agentic.ai.api.tool.Tool;
 import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.agent.tool.TypedTool;
+import io.github.agentic.ai.graph.agent.tools.ToolContextHelper;
 import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceContext;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceOperation;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceSpan;
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
 import org.springframework.util.Assert;
 
+import java.util.Map;
 import java.util.function.BiFunction;
 
 import static io.github.agentic.ai.graph.agent.tools.ToolContextConstants.AGENT_CONFIG_CONTEXT_KEY;
@@ -54,9 +60,27 @@ public class TaskOutputTool implements BiFunction<TaskOutputTool.Request, ToolCo
 
 	private final TaskRepository taskRepository;
 
+	private final AgentTracer agentTracer;
+
+	private final TaskTraceCorrelation traceCorrelation;
+
 	public TaskOutputTool(TaskRepository taskRepository) {
+		this(taskRepository, null, null);
+	}
+
+	/**
+	 * Create a TaskOutputTool with optional cross-agent trace correlation. The tracer is an
+	 * explicit opt-in; with a null tracer the historical behavior is preserved exactly.
+	 * @param taskRepository the repository that holds the background tasks
+	 * @param agentTracer the cross-agent tracer, may be null
+	 * @param traceCorrelation the correlation store shared with the TaskTool, may be null
+	 */
+	public TaskOutputTool(TaskRepository taskRepository, AgentTracer agentTracer,
+			TaskTraceCorrelation traceCorrelation) {
 		Assert.notNull(taskRepository, "taskRepository must not be null");
 		this.taskRepository = taskRepository;
+		this.agentTracer = agentTracer;
+		this.traceCorrelation = traceCorrelation;
 	}
 
 	@Override
@@ -80,34 +104,75 @@ public class TaskOutputTool implements BiFunction<TaskOutputTool.Request, ToolCo
 		boolean shouldBlock = request.block() == null || request.block();
 		long timeoutMs = request.timeout() != null ? Math.min(request.timeout(), 600000) : 30000;
 
-		if (shouldBlock && !bgTask.isCompleted()) {
-			try {
-				bgTask.waitForCompletion(timeoutMs);
-			}
-			catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				return "Error: Wait for task interrupted";
-			}
-		}
+		boolean tracing = this.agentTracer != null && this.agentTracer.isEnabled();
+		AgentTraceContext context = tracing ? receiveContext(request.taskId(), toolContext) : null;
 
-		StringBuilder result = new StringBuilder();
-		result.append("Task ID: ").append(request.taskId()).append("\n");
-		result.append("Status: ").append(bgTask.getStatus()).append("\n\n");
-
-		if (bgTask.isCompleted() && bgTask.getResult() != null) {
-			result.append("Result:\n").append(bgTask.getResult());
-		}
-		else if (bgTask.getError() != null) {
-			result.append("Error:\n").append(bgTask.getError().getMessage());
-			if (bgTask.getError().getCause() != null) {
-				result.append("\nCause: ").append(bgTask.getError().getCause().getMessage());
+		try (AgentTraceSpan span = tracing
+				? startReceiveSpan(request.taskId(), context)
+				: AgentTraceSpan.disabled()) {
+			String outcome = null;
+			if (shouldBlock && !bgTask.isCompleted()) {
+				boolean completed = false;
+				try {
+					completed = bgTask.waitForCompletion(timeoutMs);
+				}
+				catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+					span.outcome("interrupted").success();
+					return "Error: Wait for task interrupted";
+				}
+				outcome = completed ? null : "timeout";
 			}
-		}
-		else if (!bgTask.isCompleted()) {
-			result.append("Task still running...");
-		}
 
-		return result.toString();
+			StringBuilder result = new StringBuilder();
+			result.append("Task ID: ").append(request.taskId()).append("\n");
+			result.append("Status: ").append(bgTask.getStatus()).append("\n\n");
+
+			if (bgTask.isCompleted() && bgTask.getResult() != null) {
+				result.append("Result:\n").append(bgTask.getResult());
+			}
+			else if (bgTask.getError() != null) {
+				result.append("Error:\n").append(bgTask.getError().getMessage());
+				if (bgTask.getError().getCause() != null) {
+					result.append("\nCause: ").append(bgTask.getError().getCause().getMessage());
+				}
+				span.error(bgTask.getError()).outcome("failed");
+				return result.toString();
+			}
+			else if (!bgTask.isCompleted()) {
+				result.append("Task still running...");
+				span.outcome(outcome != null ? outcome : "still-running").success();
+				return result.toString();
+			}
+
+			span.outcome(outcome != null ? outcome : "completed").success();
+			return result.toString();
+		}
+	}
+
+	/**
+	 * Start the receive span as a consumer; when the delegation context is known (fan-in
+	 * or long-running waits), the span links back to the delegation id instead of
+	 * depending on thread-local propagation.
+	 */
+	private AgentTraceSpan startReceiveSpan(String taskId, AgentTraceContext context) {
+		AgentTraceSpan span = this.agentTracer.start(AgentTraceOperation.TASK_RECEIVE, context).role("consumer");
+		if (context != null && context.delegationId() != null) {
+			span.linkToDelegation(context.delegationId());
+		}
+		return span;
+	}
+
+	private AgentTraceContext receiveContext(String taskId, ToolContext toolContext) {
+		AgentTraceContext recorded = this.traceCorrelation != null ? this.traceCorrelation.correlation(taskId).orElse(null)
+				: null;
+		if (recorded != null) {
+			return recorded;
+		}
+		Map<String, Object> state = ToolContextHelper.getState(toolContext).map(stateValue -> stateValue.data())
+			.orElse(null);
+		return AgentTraceContext.capture(ToolContextHelper.getConfig(toolContext).orElse(null), state)
+			.withTaskId(taskId);
 	}
 
 	/**
@@ -133,6 +198,10 @@ public class TaskOutputTool implements BiFunction<TaskOutputTool.Request, ToolCo
 
 		private TaskRepository taskRepository;
 
+		private AgentTracer agentTracer;
+
+		private TaskTraceCorrelation traceCorrelation;
+
 		private String name = "TaskOutput";
 
 		private String description = DEFAULT_DESCRIPTION;
@@ -140,6 +209,27 @@ public class TaskOutputTool implements BiFunction<TaskOutputTool.Request, ToolCo
 		public Builder taskRepository(TaskRepository taskRepository) {
 			Assert.notNull(taskRepository, "taskRepository must not be null");
 			this.taskRepository = taskRepository;
+			return this;
+		}
+
+		/**
+		 * Enable cross-agent trace correlation with the given tracer.
+		 * @param agentTracer the tracer, may be null to keep tracing disabled
+		 * @return this builder
+		 */
+		public Builder agentTracer(AgentTracer agentTracer) {
+			this.agentTracer = agentTracer;
+			return this;
+		}
+
+		/**
+		 * Share one correlation store between TaskTool and TaskOutputTool so receive spans
+		 * can link to their delegation span.
+		 * @param traceCorrelation the shared store, may be null
+		 * @return this builder
+		 */
+		public Builder traceCorrelation(TaskTraceCorrelation traceCorrelation) {
+			this.traceCorrelation = traceCorrelation;
 			return this;
 		}
 
@@ -155,7 +245,8 @@ public class TaskOutputTool implements BiFunction<TaskOutputTool.Request, ToolCo
 
 		public Tool build() {
 			Assert.notNull(this.taskRepository, "taskRepository must be provided");
-			return TypedTool.builder(this.name, new TaskOutputTool(this.taskRepository))
+			return TypedTool
+				.builder(this.name, new TaskOutputTool(this.taskRepository, this.agentTracer, this.traceCorrelation))
 				.description(this.description)
 				.inputType(Request.class)
 				.build();

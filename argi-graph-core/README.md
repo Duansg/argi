@@ -296,9 +296,81 @@ not as in-memory state. `RunDefinitionOptInBoundaryTest` asserts that the existi
 contracts carry no definition type and that no recovery entry point accepts an
 instance handle.
 
-## Interruption Support
+## Cross-Agent Trace Correlation
+
+`io.github.agentic.ai.graph.observation.trace` turns the existing Micrometer
+`ObservationRegistry` into a searchable chain across agent boundaries: delegation,
+acceptance, model/tool attempts and recovery stay connected instead of surfacing only
+as an isolated child failure. It is an explicit opt-in — constructing an `AgentTracer`
+and passing it to the integration points listed below — and with `ObservationRegistry.NOOP`
+(or no tracer at all) every code path behaves exactly as before and emits nothing.
+Installing the observation starter alone does not enable it.
+
+### Operations and correlation keys
+
+| Operation | Name | Role | Purpose |
+| --------- | ---- | ---- | ------- |
+| `AGENT_DELEGATION` | `argi.agent.delegation` | producer | Wraps a sub-agent invocation (TaskTool) |
+| `A2A_SEND` | `argi.agent.a2a.send` | producer | Wraps the A2A HTTP request (also on worker threads) |
+| `A2A_RECEIVE` | `argi.agent.a2a.receive` | consumer | Wraps response parsing (blocking and streaming) |
+| `TASK_RECEIVE` | `argi.agent.task.receive` | consumer | Wraps background task result retrieval |
+| `RUN_STORE` | `argi.run.store` | producer | Wraps `RunStore.submit/acquire/commit` via `ObservedRunStore` |
+
+Low-cardinality keys (tag-safe): `argi.agent.operation`, `argi.agent.role`,
+`argi.agent.phase`, `argi.agent.success`, `argi.agent.outcome`, `argi.agent.error.type`.
+High-cardinality keys (identify, do not use as tags): `argi.agent.tenant`,
+`argi.agent.run.id`, `argi.agent.task.id`, `argi.agent.attempt.id`,
+`argi.agent.delegation.id`, `argi.agent.thread.id`, `argi.agent.error`.
+
+### Identities, propagation and links
+
+- `AgentTraceContext.capture(RunnableConfig, state)` reads the tenant, run id and
+  thread id from the config (tenant/run from `TrustedExecutionContext`), and the
+  attempt id from the graph execution id kept in the state; `ObservedRunStore` uses
+  the `RunLease` fencing token as the attempt id.
+- Each delegation/receive exchange carries its own `delegationId`. Producer and
+  consumer spans share it, and request metadata on the wire carries
+  `argiRunId`/`argiTenant`/`argiAttemptId`/`argiThreadId`/`argiDelegationId` so the
+  remote side can correlate.
+- Micrometer `Observation` (1.x) has no span-link API, so fan-in, long waits and
+  recovery connections are modeled with the high-cardinality
+  `argi.agent.link.delegation.id` key (`AgentTraceSpan.linkToDelegation`) rather than
+  a parent/child scope. Consumer spans on worker threads never rely on thread-local
+  propagation.
+- While a span is open, tenant/run/task/attempt/delegation ids are mirrored to MDC
+  (`argi.tenant`, `argi.agent.run.id`, `argi.agent.task.id`, `argi.agent.attempt.id`,
+  `argi.agent.delegation.id`) and the previous MDC values are restored on close.
+
+### Privacy defaults and exporter boundary
+
+- No private chain-of-thought, full prompts, tool payloads, token counts, tokens or
+  secrets are ever recorded as span attributes. Exception details go through
+  `ObservationContentSanitizer` (sensitive-key redaction and length truncation) and
+  only the redacted wrapper is handed to `observation.error(...)`.
+- Enabling the tracer records *that* work happened and the identifiers needed to
+  join spans — nothing else. Exporters, samplers and collectors remain application
+  concerns; a `NOOP` registry keeps everything disabled with no allocation.
+
+### Wiring
+
+```java
+AgentTracer tracer = new AgentTracer(observationRegistry); // null or NOOP = disabled
+
+TaskToolsBuilder tools = TaskToolsBuilder.builder()
+        .agentTracer(tracer);            // TaskTool + TaskOutputTool share one correlation store
+
+A2aRemoteAgent remote = A2aRemoteAgent.builder()
+        .agentTracer(tracer)             // send/receive spans + producer metadata
+        .build();
+
+RunStore observed = new ObservedRunStore(runStore, tracer); // submit/acquire/commit spans
+```
+
+
 
 ARGI Graph supports interrupting workflow execution at specific points, enabling human-in-the-loop scenarios.
+
+## Interruption Support
 
 ### InterruptableAction Interface
 

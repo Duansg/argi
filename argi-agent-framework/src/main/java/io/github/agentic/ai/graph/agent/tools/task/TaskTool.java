@@ -24,7 +24,13 @@ import org.slf4j.LoggerFactory;
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.tool.ToolContext;
 import io.github.agentic.ai.api.tool.Tool;
+import io.github.agentic.ai.graph.RunnableConfig;
 import io.github.agentic.ai.graph.agent.tool.TypedTool;
+import io.github.agentic.ai.graph.agent.tools.ToolContextHelper;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceContext;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceOperation;
+import io.github.agentic.ai.graph.observation.trace.AgentTraceSpan;
+import io.github.agentic.ai.graph.observation.trace.AgentTracer;
 import org.springframework.util.Assert;
 import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
@@ -71,11 +77,33 @@ public class TaskTool implements BiFunction<TaskTool.Request, ToolContext, Strin
 
 	private final TaskRepository taskRepository;
 
+	private final AgentTracer agentTracer;
+
+	private final TaskTraceCorrelation traceCorrelation;
+
 	public TaskTool(Map<String, ReactAgent> subAgents, TaskRepository taskRepository) {
+		this(subAgents, taskRepository, null, null);
+	}
+
+	/**
+	 * Create a TaskTool with optional cross-agent trace correlation. The tracer is an
+	 * explicit opt-in; with a null tracer the historical behavior is preserved exactly and
+	 * no observation is emitted.
+	 * @param subAgents the sub-agents this tool can delegate to
+	 * @param taskRepository the repository used for background tasks
+	 * @param agentTracer the cross-agent tracer, may be null
+	 * @param traceCorrelation the correlation store shared with the TaskOutputTool, may be
+	 * null
+	 */
+	public TaskTool(Map<String, ReactAgent> subAgents, TaskRepository taskRepository, AgentTracer agentTracer,
+			TaskTraceCorrelation traceCorrelation) {
 		Assert.notEmpty(subAgents, "subAgents must not be empty");
 		Assert.notNull(taskRepository, "taskRepository must not be null");
 		this.subAgents = Map.copyOf(subAgents);
 		this.taskRepository = taskRepository;
+		this.agentTracer = agentTracer;
+		this.traceCorrelation = agentTracer != null && traceCorrelation == null ? new TaskTraceCorrelation()
+				: traceCorrelation;
 	}
 
 	@Override
@@ -95,26 +123,77 @@ public class TaskTool implements BiFunction<TaskTool.Request, ToolContext, Strin
 			return "Error: prompt is required";
 		}
 
+		boolean tracing = tracing();
+		RunnableConfig parentConfig = tracing ? ToolContextHelper.getConfig(toolContext).orElse(null) : null;
+		AgentTraceContext parentContext = tracing ? captureContext(toolContext, parentConfig) : null;
+
 		if (Boolean.TRUE.equals(request.runInBackground())) {
 			String taskId = "task_" + UUID.randomUUID();
-			this.taskRepository.putTask(taskId, () -> executeSubAgent(subAgent, prompt));
+			AgentTraceContext taskContext = parentContext != null
+					? parentContext.withTaskId(taskId).withDelegationId(UUID.randomUUID().toString()) : null;
+			if (this.traceCorrelation != null && taskContext != null) {
+				this.traceCorrelation.record(taskId, taskContext);
+			}
+			this.taskRepository.putTask(taskId, () -> executeSubAgent(subAgent, prompt, parentConfig, taskContext));
 			return String.format(
 					"task_id: %s%n%nBackground task started. Use TaskOutput tool with task_id='%s' to retrieve results.",
 					taskId, taskId);
 		}
 
-		return executeSubAgent(subAgent, prompt);
+		return executeSubAgent(subAgent, prompt, parentConfig, parentContext);
 	}
 
-	private String executeSubAgent(ReactAgent subAgent, String prompt) {
-		try {
-			ChatMessage result = subAgent.call(prompt);
-			return result != null ? result.text() : "Sub-agent returned empty response";
+	private String executeSubAgent(ReactAgent subAgent, String prompt, RunnableConfig parentConfig,
+			AgentTraceContext context) {
+		boolean tracing = tracing();
+		AgentTraceContext spanContext = context;
+		if (tracing) {
+			// Every delegation span carries its own correlation anchor so consumers can
+			// link back to it even when the caller did not provide one.
+			spanContext = spanContext != null
+					? (spanContext.delegationId() != null ? spanContext
+							: spanContext.withDelegationId(UUID.randomUUID().toString()))
+					: AgentTraceContext.builder().delegationId(UUID.randomUUID().toString()).build();
 		}
-		catch (Exception e) {
-			logger.warn("Sub-agent execution failed: {}", e.getMessage());
-			return "Error executing sub-agent: " + e.getMessage();
+		try (AgentTraceSpan span = tracing
+				? this.agentTracer.start(AgentTraceOperation.AGENT_DELEGATION, spanContext)
+				: AgentTraceSpan.disabled()) {
+			try {
+				ChatMessage result = invokeSubAgent(subAgent, prompt, parentConfig, tracing);
+				span.success();
+				return result != null ? result.text() : "Sub-agent returned empty response";
+			}
+			catch (Exception e) {
+				span.error(e);
+				logger.warn("Sub-agent execution failed: {}", e.getMessage());
+				return "Error executing sub-agent: " + e.getMessage();
+			}
 		}
+	}
+
+	private ChatMessage invokeSubAgent(ReactAgent subAgent, String prompt, RunnableConfig parentConfig,
+			boolean tracing) throws Exception {
+		if (tracing && parentConfig != null) {
+			// Same derivation convention as AgentTool so the child chain stays searchable.
+			RunnableConfig childConfig = RunnableConfig.builder(parentConfig)
+				.threadId(parentConfig.threadId().map(id -> id + "_" + subAgent.name()).orElseGet(subAgent::name))
+				.nextNode(null)
+				.checkPointId(null)
+				.build();
+			childConfig.clearContext();
+			return subAgent.call(prompt, childConfig);
+		}
+		return subAgent.call(prompt);
+	}
+
+	private boolean tracing() {
+		return this.agentTracer != null && this.agentTracer.isEnabled();
+	}
+
+	private AgentTraceContext captureContext(ToolContext toolContext, RunnableConfig parentConfig) {
+		Map<String, Object> state = ToolContextHelper.getState(toolContext).map(stateValue -> stateValue.data())
+			.orElse(null);
+		return AgentTraceContext.capture(parentConfig, state);
 	}
 
 	/**
@@ -144,6 +223,10 @@ public class TaskTool implements BiFunction<TaskTool.Request, ToolContext, Strin
 
 		private TaskRepository taskRepository = new DefaultTaskRepository();
 
+		private AgentTracer agentTracer;
+
+		private TaskTraceCorrelation traceCorrelation;
+
 		private String name = "Task";
 
 		private String description;
@@ -165,6 +248,27 @@ public class TaskTool implements BiFunction<TaskTool.Request, ToolContext, Strin
 		public Builder taskRepository(TaskRepository taskRepository) {
 			Assert.notNull(taskRepository, "taskRepository must not be null");
 			this.taskRepository = taskRepository;
+			return this;
+		}
+
+		/**
+		 * Enable cross-agent trace correlation with the given tracer.
+		 * @param agentTracer the tracer, may be null to keep tracing disabled
+		 * @return this builder
+		 */
+		public Builder agentTracer(AgentTracer agentTracer) {
+			this.agentTracer = agentTracer;
+			return this;
+		}
+
+		/**
+		 * Share one correlation store between TaskTool and TaskOutputTool so receive spans
+		 * can link to their delegation span. When omitted, a private store is created.
+		 * @param traceCorrelation the shared store, may be null
+		 * @return this builder
+		 */
+		public Builder traceCorrelation(TaskTraceCorrelation traceCorrelation) {
+			this.traceCorrelation = traceCorrelation;
 			return this;
 		}
 
@@ -190,7 +294,8 @@ public class TaskTool implements BiFunction<TaskTool.Request, ToolContext, Strin
 				desc = DEFAULT_DESCRIPTION.formatted(agentList);
 			}
 
-			TaskTool taskTool = new TaskTool(this.subAgents, this.taskRepository);
+			TaskTool taskTool = new TaskTool(this.subAgents, this.taskRepository, this.agentTracer,
+					this.traceCorrelation);
 			return TypedTool.builder(this.name, taskTool).description(desc).inputType(Request.class).build();
 		}
 
