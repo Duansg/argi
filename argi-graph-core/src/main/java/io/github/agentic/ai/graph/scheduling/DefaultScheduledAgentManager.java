@@ -49,7 +49,7 @@ public class DefaultScheduledAgentManager implements ScheduledAgentManager {
 
 	private volatile boolean shutdown = false;
 
-	private DefaultScheduledAgentManager() {
+	DefaultScheduledAgentManager() {
 		this.taskScheduler = createTaskScheduler();
 		log.info("Default Scheduled Agent Manager initialized with shared task scheduler");
 	}
@@ -76,12 +76,13 @@ public class DefaultScheduledAgentManager implements ScheduledAgentManager {
 	 */
 	@Override
 	public String registerTask(ScheduledAgentTask task) {
-		if (shutdown) {
-			throw new IllegalStateException("Default Scheduled Agent Manager is shut down");
-		}
-		String taskId = String.format("agent-task-%s-%d", task.getName(), taskIdGenerator.getAndIncrement());
 		lock.writeLock().lock();
 		try {
+			// Checked under the same lock as shutdown so no task is added after it
+			if (shutdown) {
+				throw new IllegalStateException("Default Scheduled Agent Manager is shut down");
+			}
+			String taskId = String.format("agent-task-%s-%d", task.getName(), taskIdGenerator.getAndIncrement());
 			activeTasks.put(taskId, task);
 			log.debug("Registered scheduled agent task: {}", taskId);
 			return taskId;
