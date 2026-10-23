@@ -49,11 +49,14 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ScheduledAgentTaskLifecycleTest {
 
 	private final RecordingScheduledAgentManager manager = new RecordingScheduledAgentManager();
+
+	private final RecordingScheduledAgentManager otherManager = new RecordingScheduledAgentManager();
 
 	@AfterEach
 	void resetSchedulerFactory() {
@@ -242,6 +245,60 @@ class ScheduledAgentTaskLifecycleTest {
 		assertEquals(1, manager.unregisterCount(task.getTaskId()));
 	}
 
+	@Test
+	void stopUnregistersFromOwningManagerAfterProviderSwitch() throws Exception {
+		registerRecordingManager();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().fixedDelay(1000).initialDelay(0).build()).start();
+		ScheduledAgentManagerFactory.getInstance().registerProvider(() -> otherManager);
+		ScheduledAgentTask otherTask = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().fixedDelay(1000).initialDelay(0).build());
+		assertEquals(task.getTaskId(), otherTask.getTaskId());
+
+		task.stop();
+		task.stop();
+
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+		assertEquals(0, otherManager.unregisterCount(task.getTaskId()));
+		assertTrue(otherManager.getTask(otherTask.getTaskId()).isPresent());
+	}
+
+	@Test
+	void oneTimeCompletionUnregistersFromOwningManagerAfterProviderSwitch() throws Exception {
+		registerRecordingManager();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).build()).start();
+		ScheduledAgentManagerFactory.getInstance().registerProvider(() -> otherManager);
+		ScheduledAgentTask otherTask = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).build());
+
+		manager.scheduler.runNext();
+		task.stop();
+
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+		assertEquals(0, otherManager.unregisterCount(task.getTaskId()));
+		assertTrue(otherManager.getTask(otherTask.getTaskId()).isPresent());
+	}
+
+	@Test
+	void failedRegistrationDoesNotTouchOtherManagers() throws Exception {
+		ScheduledAgentManagerFactory.getInstance().registerProvider(() -> otherManager);
+		ScheduledAgentTask otherTask = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).build());
+		manager.rejectRegistrations();
+		registerRecordingManager();
+
+		assertThrows(IllegalStateException.class,
+				() -> new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+						ScheduleConfig.builder().initialDelay(0).build()));
+
+		assertEquals(0, manager.getActiveTaskCount());
+		assertEquals(0, otherManager.unregisterCount(otherTask.getTaskId()));
+		assertTrue(otherManager.getTask(otherTask.getTaskId()).isPresent());
+	}
+
 	private void registerRecordingManager() {
 		ScheduledAgentManagerFactory.getInstance().registerProvider(() -> manager);
 	}
@@ -286,8 +343,13 @@ class ScheduledAgentTaskLifecycleTest {
 
 		private final AtomicInteger sequence = new AtomicInteger();
 
+		private boolean rejectRegistrations;
+
 		@Override
 		public String registerTask(ScheduledAgentTask task) {
+			if (rejectRegistrations) {
+				throw new IllegalStateException("registration rejected");
+			}
 			String taskId = "test-task-" + sequence.incrementAndGet();
 			tasks.put(taskId, task);
 			return taskId;
@@ -327,6 +389,10 @@ class ScheduledAgentTaskLifecycleTest {
 		@Override
 		public void shutdown() {
 			tasks.clear();
+		}
+
+		void rejectRegistrations() {
+			rejectRegistrations = true;
 		}
 
 		int unregisterCount(String taskId) {

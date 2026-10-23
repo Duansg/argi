@@ -41,6 +41,8 @@ public class ScheduledAgentTask {
 
 	private static final Logger log = LoggerFactory.getLogger(CompiledGraph.class);
 
+	private final ScheduledAgentManager manager;
+
 	private final TaskScheduler taskScheduler;
 
 	private final CompiledGraph graph;
@@ -60,10 +62,10 @@ public class ScheduledAgentTask {
 	public ScheduledAgentTask(CompiledGraph graph, ScheduleConfig config) {
 		this.graph = graph;
 		this.config = config;
-		ScheduledAgentManager scheduledAgentManager = ScheduledAgentManagerFactory.getInstance().getManager();
-		this.taskScheduler = scheduledAgentManager.getTaskScheduler();
-		// Register with the active manager
-		this.taskId = scheduledAgentManager.registerTask(this);
+		this.manager = ScheduledAgentManagerFactory.getInstance().getManager();
+		this.taskScheduler = manager.getTaskScheduler();
+		// Register with the active manager; later unregistration goes to the same owner
+		this.taskId = manager.registerTask(this);
 		log.debug("Created ScheduledAgentTask with ID: {}", taskId);
 	}
 
@@ -214,7 +216,7 @@ public class ScheduledAgentTask {
 
 	private void unregisterTask() {
 		if (unregistered.compareAndSet(false, true)) {
-			ScheduledAgentManagerFactory.getInstance().getManager().unregisterTask(taskId);
+			manager.unregisterTask(taskId);
 		}
 	}
 
