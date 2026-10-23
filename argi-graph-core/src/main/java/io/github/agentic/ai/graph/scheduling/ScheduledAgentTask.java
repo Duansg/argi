@@ -49,11 +49,13 @@ public class ScheduledAgentTask {
 
 	private final ScheduleConfig config;
 
-	private volatile ScheduledFuture<?> scheduledFuture;
+	private final Object lifecycleLock = new Object();
+
+	private ScheduledFuture<?> scheduledFuture;
+
+	private volatile State state = State.NEW;
 
 	private volatile boolean started = false;
-
-	private volatile boolean stopped = false;
 
 	private final AtomicBoolean unregistered = new AtomicBoolean(false);
 
@@ -73,47 +75,87 @@ public class ScheduledAgentTask {
 	 * Start the scheduled execution
 	 */
 	public ScheduledAgentTask start() {
-		if (started) {
-			throw new IllegalStateException("Schedule already started");
+		synchronized (lifecycleLock) {
+			switch (state) {
+				case NEW:
+					state = State.STARTING;
+					break;
+				case STOPPED:
+					throw new IllegalStateException("Schedule already stopped");
+				case FAILED:
+					throw new IllegalStateException("Schedule failed to start");
+				default:
+					throw new IllegalStateException("Schedule already started");
+			}
 		}
 
+		ScheduledFuture<?> future;
+		try {
+			future = schedule();
+		}
+		catch (RuntimeException e) {
+			synchronized (lifecycleLock) {
+				if (state == State.STARTING) {
+					state = State.FAILED;
+				}
+			}
+			unregisterTask();
+			throw e;
+		}
+
+		boolean running;
+		synchronized (lifecycleLock) {
+			running = state == State.STARTING;
+			if (running) {
+				scheduledFuture = future;
+				started = true;
+				state = State.RUNNING;
+			}
+		}
+		if (!running) {
+			// stop() won the race while scheduling; drop the late future
+			future.cancel(false);
+			return this;
+		}
+
+		notifyListeners(ScheduleLifecycleListener.ScheduleEvent.STARTED);
+		return this;
+	}
+
+	private ScheduledFuture<?> schedule() {
 		switch (config.getMode()) {
 			case CRON:
-				scheduledFuture = taskScheduler.schedule(this::executeGraph,
-						new CronTrigger(config.getCronExpression()));
-				break;
+				return taskScheduler.schedule(this::executeGraph, new CronTrigger(config.getCronExpression()));
 			case FIXED_DELAY:
-				scheduledFuture = taskScheduler.scheduleWithFixedDelay(this::executeGraph,
+				return taskScheduler.scheduleWithFixedDelay(this::executeGraph,
 						Instant.now().plusMillis(config.getInitialDelay()), Duration.ofMillis(config.getFixedDelay()));
-				break;
 			case FIXED_RATE:
-				scheduledFuture = taskScheduler.scheduleAtFixedRate(this::executeGraph,
+				return taskScheduler.scheduleAtFixedRate(this::executeGraph,
 						Instant.now().plusMillis(config.getInitialDelay()), Duration.ofMillis(config.getFixedRate()));
-				break;
 			case ONE_TIME:
-				scheduledFuture = taskScheduler.schedule(this::executeGraph,
-						Instant.now().plusMillis(config.getInitialDelay()));
-				break;
+				return taskScheduler.schedule(this::executeGraph, Instant.now().plusMillis(config.getInitialDelay()));
 			case TRIGGER:
-				scheduledFuture = taskScheduler.schedule(this::executeGraph, config.getTrigger());
-				break;
+				return taskScheduler.schedule(this::executeGraph, config.getTrigger());
 			default:
 				throw new IllegalStateException("Unexpected value: " + config.getMode());
 		}
-
-		started = true;
-		notifyListeners(ScheduleLifecycleListener.ScheduleEvent.STARTED);
-		return this;
 	}
 
 	/**
 	 * Stop the scheduled execution
 	 */
 	public void stop() {
-		if (scheduledFuture != null && !scheduledFuture.isCancelled()) {
-			scheduledFuture.cancel(false);
+		ScheduledFuture<?> future;
+		synchronized (lifecycleLock) {
+			if (state == State.STOPPED) {
+				return;
+			}
+			state = State.STOPPED;
+			future = scheduledFuture;
 		}
-		stopped = true;
+		if (future != null && !future.isCancelled()) {
+			future.cancel(false);
+		}
 
 		// Unregister from active manager
 		unregisterTask();
@@ -226,7 +268,7 @@ public class ScheduledAgentTask {
 	}
 
 	public boolean isStopped() {
-		return stopped;
+		return state == State.STOPPED;
 	}
 
 	/**
@@ -241,6 +283,12 @@ public class ScheduledAgentTask {
 	 */
 	public String getName() {
 		return graph.stateGraph.getName();
+	}
+
+	private enum State {
+
+		NEW, STARTING, RUNNING, STOPPED, FAILED
+
 	}
 
 }

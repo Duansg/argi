@@ -49,6 +49,7 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -299,6 +300,113 @@ class ScheduledAgentTaskLifecycleTest {
 		assertTrue(otherManager.getTask(otherTask.getTaskId()).isPresent());
 	}
 
+	@Test
+	void concurrentStartSchedulesExactlyOnce() throws Exception {
+		registerRecordingManager();
+		CountDownLatch scheduling = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		manager.scheduler.blockOneTimeScheduling(scheduling, release);
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).build());
+		AtomicReference<Throwable> firstStartFailure = new AtomicReference<>();
+		Thread firstStart = new Thread(() -> {
+			try {
+				task.start();
+			}
+			catch (Throwable throwable) {
+				firstStartFailure.set(throwable);
+			}
+		}, "scheduled-first-start-test");
+
+		firstStart.start();
+		assertTrue(scheduling.await(5, TimeUnit.SECONDS));
+		assertThrows(IllegalStateException.class, task::start);
+		release.countDown();
+		firstStart.join(TimeUnit.SECONDS.toMillis(5));
+
+		assertFalse(firstStart.isAlive());
+		assertEquals(null, firstStartFailure.get());
+		assertEquals(1, manager.scheduler.futures.size());
+		assertTrue(task.isStarted());
+	}
+
+	@Test
+	void stopDuringStartCancelsLateFutureAndSkipsStartedEvent() throws Exception {
+		registerRecordingManager();
+		CountDownLatch scheduling = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		manager.scheduler.blockOneTimeScheduling(scheduling, release);
+		CopyOnWriteArrayList<ScheduleLifecycleListener.ScheduleEvent> events = new CopyOnWriteArrayList<>();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).addListener(recordEvents(events)).build());
+		Thread starter = new Thread(task::start, "scheduled-start-stop-test");
+
+		starter.start();
+		assertTrue(scheduling.await(5, TimeUnit.SECONDS));
+		task.stop();
+		release.countDown();
+		starter.join(TimeUnit.SECONDS.toMillis(5));
+
+		assertFalse(starter.isAlive());
+		assertEquals(1, manager.scheduler.futures.size());
+		assertTrue(manager.scheduler.futures.get(0).isCancelled());
+		assertEquals(0, count(events, ScheduleLifecycleListener.ScheduleEvent.STARTED));
+		assertEquals(1, count(events, ScheduleLifecycleListener.ScheduleEvent.STOPPED));
+		assertTrue(task.isStopped());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void startAfterStopIsRejectedWithoutScheduling() throws Exception {
+		registerRecordingManager();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().fixedDelay(1000).initialDelay(0).build());
+
+		task.stop();
+
+		assertThrows(IllegalStateException.class, task::start);
+		assertTrue(manager.scheduler.futures.isEmpty());
+		assertNull(manager.scheduler.removeNext());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void schedulingFailureUnregistersTaskAndKeepsStopIdempotent() throws Exception {
+		registerRecordingManager();
+		manager.scheduler.failOneTimeScheduling();
+		CopyOnWriteArrayList<ScheduleLifecycleListener.ScheduleEvent> events = new CopyOnWriteArrayList<>();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder().initialDelay(0).addListener(recordEvents(events)).build());
+
+		assertThrows(IllegalStateException.class, task::start);
+
+		assertFalse(task.isStarted());
+		assertTrue(manager.getTask(task.getTaskId()).isEmpty());
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+		assertEquals(0, count(events, ScheduleLifecycleListener.ScheduleEvent.STARTED));
+		assertThrows(IllegalStateException.class, task::start);
+		task.stop();
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
+	@Test
+	void repeatedStopNotifiesOnce() throws Exception {
+		registerRecordingManager();
+		CopyOnWriteArrayList<ScheduleLifecycleListener.ScheduleEvent> events = new CopyOnWriteArrayList<>();
+		ScheduledAgentTask task = new ScheduledAgentTask(graphFailingFirstAttempts(new AtomicInteger(), 0),
+				ScheduleConfig.builder()
+					.fixedDelay(1000)
+					.initialDelay(0)
+					.addListener(recordEvents(events))
+					.build()).start();
+
+		task.stop();
+		task.stop();
+
+		assertEquals(1, count(events, ScheduleLifecycleListener.ScheduleEvent.STOPPED));
+		assertEquals(1, manager.unregisterCount(task.getTaskId()));
+	}
+
 	private void registerRecordingManager() {
 		ScheduledAgentManagerFactory.getInstance().registerProvider(() -> manager);
 	}
@@ -406,7 +514,15 @@ class ScheduledAgentTaskLifecycleTest {
 
 		private final Queue<Runnable> scheduledTasks = new ArrayDeque<>();
 
+		private final CopyOnWriteArrayList<TestScheduledFuture> futures = new CopyOnWriteArrayList<>();
+
 		private boolean runOneTimeTasksImmediately;
+
+		private boolean failOneTimeScheduling;
+
+		private CountDownLatch oneTimeScheduling;
+
+		private CountDownLatch oneTimeRelease;
 
 		@Override
 		public ScheduledFuture<?> schedule(Runnable task, Trigger trigger) {
@@ -416,6 +532,23 @@ class ScheduledAgentTaskLifecycleTest {
 
 		@Override
 		public ScheduledFuture<?> schedule(Runnable task, Instant startTime) {
+			if (failOneTimeScheduling) {
+				throw new IllegalStateException("scheduler rejected task");
+			}
+			if (oneTimeScheduling != null) {
+				oneTimeScheduling.countDown();
+				try {
+					assertTrue(oneTimeRelease.await(5, TimeUnit.SECONDS));
+				}
+				catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+					throw new IllegalStateException(e);
+				}
+				scheduledTasks.add(task);
+				TestScheduledFuture future = new TestScheduledFuture();
+				futures.add(future);
+				return future;
+			}
 			if (runOneTimeTasksImmediately) {
 				task.run();
 				return new TestScheduledFuture();
@@ -460,6 +593,15 @@ class ScheduledAgentTaskLifecycleTest {
 
 		void runOneTimeTasksImmediately() {
 			runOneTimeTasksImmediately = true;
+		}
+
+		void failOneTimeScheduling() {
+			failOneTimeScheduling = true;
+		}
+
+		void blockOneTimeScheduling(CountDownLatch scheduling, CountDownLatch release) {
+			oneTimeScheduling = scheduling;
+			oneTimeRelease = release;
 		}
 
 	}
