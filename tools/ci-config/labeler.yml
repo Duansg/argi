@@ -30,7 +30,7 @@
 "area/graph":
   - changed-files:
       - any-glob-to-any-file:
-          - "argi-orchestration/argi-loop-core/**/*"
+          - "argi-orchestration/argi-workflow-graph-core/**/*"
 "area/core":
   - changed-files:
       - any-glob-to-any-file:

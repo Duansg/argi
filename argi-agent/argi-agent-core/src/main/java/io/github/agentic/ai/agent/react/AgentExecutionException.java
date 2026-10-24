@@ -15,7 +15,7 @@
  */
 package io.github.agentic.ai.agent.react;
 
-import io.github.agentic.ai.graph.agent.AgentResult;
+import io.github.agentic.ai.agent.AgentResult;
 
 /** Signals a failed structured-output delivery without turning it into a successful outcome. */
 public final class AgentExecutionException extends RuntimeException {

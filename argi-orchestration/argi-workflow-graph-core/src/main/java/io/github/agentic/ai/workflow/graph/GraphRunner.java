@@ -1,0 +1,107 @@
+/*
+ * Copyright 2024-2026 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.github.agentic.ai.workflow.graph;
+
+import io.github.agentic.ai.workflow.graph.executor.MainGraphExecutor;
+import io.github.agentic.ai.workflow.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.workflow.graph.checkpoint.LeasedCheckpointSaver;
+import io.github.agentic.ai.workflow.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.workflow.graph.checkpoint.VersionedCheckpointScope;
+import io.github.agentic.ai.workflow.graph.checkpoint.lease.ExecutionLeaseScope;
+
+import reactor.core.publisher.Flux;
+
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+
+/**
+ * A reactive graph execution engine based on Project Reactor. This class has been
+ * refactored to use OOP principles (inheritance, polymorphism, encapsulation) for better
+ * separation of concerns and improved readability.
+ */
+public class GraphRunner {
+
+	private final CompiledGraph compiledGraph;
+
+	private final RunnableConfig config;
+
+	private final AtomicReference<Object> resultValue = new AtomicReference<>();
+
+	// Handler for main execution flow - demonstrates encapsulation
+	private final MainGraphExecutor mainGraphExecutor;
+
+	public GraphRunner(CompiledGraph compiledGraph, RunnableConfig config) {
+		this.compiledGraph = compiledGraph;
+		this.config = config.withoutExecutionGuard();
+		// Initialize the main execution handler - demonstrates encapsulation
+		this.mainGraphExecutor = new MainGraphExecutor();
+	}
+
+	public Flux<GraphResponse<NodeOutput>> run(OverAllState initialState) {
+		return compiledGraph.compileConfig.checkpointSaver()
+			.map(saver -> CheckpointExecutionQueue.serialize(saver, config, () -> {
+				if (saver instanceof LeasedCheckpointSaver leasedSaver) {
+					return ExecutionLeaseScope.withLease(leasedSaver, config,
+							lease -> VersionedCheckpointScope.withScope(leasedSaver, config,
+									compiledGraph.stateGraph.getStateSerializer(),
+									scope -> runWithCheckpointLease(initialState, scope)));
+				}
+				if (saver instanceof VersionedCheckpointSaver versionedSaver) {
+					return VersionedCheckpointScope.withScope(versionedSaver, config,
+							compiledGraph.stateGraph.getStateSerializer(),
+							scope -> runWithCheckpointLease(initialState, scope));
+				}
+				return runWithCheckpointLease(initialState, null);
+			}))
+			.orElseGet(() -> runWithCheckpointLease(initialState));
+	}
+
+	private Flux<GraphResponse<NodeOutput>> runWithCheckpointLease(OverAllState initialState) {
+		return runWithCheckpointLease(initialState, null);
+	}
+
+	private Flux<GraphResponse<NodeOutput>> runWithCheckpointLease(OverAllState initialState,
+			VersionedCheckpointScope checkpointScope) {
+		return Flux.defer(() -> {
+			try {
+				GraphRunnerContext context = new GraphRunnerContext(initialState, config, compiledGraph,
+						checkpointScope);
+				// Delegate to the main execution handler, then expand step continuations
+				// iteratively (depth-first). Executors emit a continuation marker as the
+				// last element of each step instead of recursively nesting the next step
+				// with concatWith(Flux.defer(...)), which grew the reactive operator chain
+				// by one layer per executed node and blew the stack on long-running loops
+				// (issue #4594). expandDeep drains continuations through a single operator,
+				// keeping the subscriber depth constant while preserving emission order.
+				return mainGraphExecutor.execute(context, resultValue)
+					.expandDeep(response -> response.hasContinuation()
+							? Flux.defer(() -> response.getContinuation().get()) : Flux.empty())
+					.filter(response -> !response.hasContinuation())
+					// In-flight async node completions may still land after the subscriber
+					// cancels; from this point on they must not persist any checkpoint.
+					.doOnCancel(context::markCancelled);
+			}
+			catch (Exception e) {
+				return Flux.error(e);
+			}
+		});
+	}
+
+	public Optional<Object> resultValue() {
+		return Optional.ofNullable(resultValue.get());
+	}
+
+}

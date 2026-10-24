@@ -16,16 +16,20 @@
 package io.github.agentic.ai.agent;
 
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicReference;
+
+import io.github.agentic.ai.runtime.execution.ExecutionStoppedException;
 
 /** Bounded-memory terminal collector shared by all implementations of Agent. */
 final class AgentInvocation implements Flow.Subscriber<AgentEvent> {
 
 	private final AgentExecutionContext context;
 
-	private final CompletableFuture<AgentOutcome> result = new CompletableFuture<>();
+	private final TerminalFuture result = new TerminalFuture();
 
 	private final AtomicReference<Flow.Subscription> subscription = new AtomicReference<>();
 
@@ -153,6 +157,62 @@ final class AgentInvocation implements Flow.Subscriber<AgentEvent> {
 
 		@Override
 		public void cancel() {
+		}
+
+	}
+
+	private static final class TerminalFuture extends CompletableFuture<AgentOutcome> {
+
+		private final AtomicReference<ExecutionStoppedException> stopped = new AtomicReference<>();
+
+		@Override
+		public synchronized boolean completeExceptionally(Throwable failure) {
+			if (isDone()) {
+				return false;
+			}
+			if (failure instanceof ExecutionStoppedException executionStopped) {
+				stopped.set(executionStopped);
+				return super.completeExceptionally(failure);
+			}
+			return super.completeExceptionally(failure);
+		}
+
+		@Override
+		public synchronized boolean complete(AgentOutcome outcome) {
+			return super.complete(outcome);
+		}
+
+		@Override
+		public synchronized boolean cancel(boolean mayInterruptIfRunning) {
+			return super.cancel(mayInterruptIfRunning);
+		}
+
+		@Override
+		public AgentOutcome join() {
+			try {
+				return super.join();
+			}
+			catch (CancellationException cancellation) {
+				ExecutionStoppedException executionStopped = stopped.get();
+				if (executionStopped != null) {
+					throw executionStopped;
+				}
+				throw cancellation;
+			}
+		}
+
+		@Override
+		public AgentOutcome get() throws InterruptedException, ExecutionException {
+			try {
+				return super.get();
+			}
+			catch (CancellationException cancellation) {
+				ExecutionStoppedException executionStopped = stopped.get();
+				if (executionStopped != null) {
+					throw executionStopped;
+				}
+				throw cancellation;
+			}
 		}
 
 	}

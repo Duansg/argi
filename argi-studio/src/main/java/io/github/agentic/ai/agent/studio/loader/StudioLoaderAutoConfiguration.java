@@ -23,9 +23,9 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Registers default loaders when none are defined by the application.
  * <ul>
- * <li>{@link AgentLoader}: discovers all {@link io.github.agentic.ai.graph.agent.Agent}
+ * <li>{@link AgentLoader}: discovers all {@link io.github.agentic.ai.agent.orchestration.Agent}
  * beans.</li>
- * <li>{@link GraphLoader}: discovers all {@link io.github.agentic.ai.graph.CompiledGraph}
+ * <li>{@link GraphLoader}: discovers all {@link io.github.agentic.ai.workflow.graph.CompiledGraph}
  * beans (when graph-core is on classpath).</li>
  * </ul>
  */

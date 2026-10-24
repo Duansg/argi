@@ -26,7 +26,7 @@ The following classes have one implementation, owned by this artifact:
 | Definition references, resolver SPI and worker/recovery declarations | Exact version selection and explicit capability checks |
 | `ExecutionGuard` / `ExecutionControl` | Cooperative cancellation, deadline checks and ownership loss without lease credentials |
 
-`argi-loop-core` depends on this artifact. The contracts neither invoke Loop
+`argi-workflow-graph-core` depends on this artifact. The contracts neither invoke Loop
 nor load it through reflection. Moving them is a dependency extraction, not an
 adapter that delegates to the old engine.
 
@@ -54,7 +54,7 @@ Their shared invocation boundary and capability ownership map are now in
 ## Package and compatibility decision
 
 The extracted contracts retain their existing
-`io.github.agentic.ai.graph.execution` fully qualified names. ExecutionGuard also retains its original checkpoint.lease name;
+`io.github.agentic.ai.runtime.execution` fully qualified names. ExecutionGuard is now part of the runtime.execution contract;
 new ExecutionControl types use io.github.agentic.ai.runtime.execution.
 The package name is transitional; it does not represent an artifact dependency.
 

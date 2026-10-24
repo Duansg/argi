@@ -11,16 +11,16 @@ to use their existing defaults when no compile configuration is provided.
 ## Graph Configuration
 
 ```java
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.StateGraph;
-import io.github.agentic.ai.graph.exception.GraphStateException;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.exception.GraphStateException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.util.Map;
 
-import static io.github.agentic.ai.graph.action.AsyncNodeAction.node_async;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 
 @Configuration(proxyBeanMethods = false)
 class WorkflowConfiguration {
@@ -41,8 +41,8 @@ With an existing neutral `ChatClient` bean, pass the same compile configuration 
 agent builder:
 
 ```java
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.agent.ReactAgent;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.agent.orchestration.ReactAgent;
 import io.github.agentic.ai.api.chat.ChatClient;
 import org.springframework.context.annotation.Bean;
 
@@ -77,8 +77,8 @@ not configure an OpenTelemetry collector or a tracing exporter.
 
 Graph/node observations alone do not connect calls across agent boundaries
 (delegation, A2A send/receive, background task retrieval, run store commits).
-Those links come from the opt-in `AgentTracer` in `argi-loop-core`
-(`io.github.agentic.ai.graph.observation.trace`); see the graph-core README for
+Those links come from the opt-in `AgentTracer` in `argi-workflow-graph-core`
+(`io.github.agentic.ai.workflow.graph.observation.trace`); see the graph-core README for
 the span model, correlation keys and privacy defaults.
 
 The starter intentionally adds **no new configuration keys**: constructing and
@@ -88,10 +88,10 @@ preserved unchanged when no tracer is supplied. Wire the tracer by hand against
 the registry the starter already manages:
 
 ```java
-import io.github.agentic.ai.graph.observation.trace.AgentTracer;
-import io.github.agentic.ai.graph.execution.run.ObservedRunStore;
-import io.github.agentic.ai.graph.agent.tools.task.TaskToolsBuilder;
-import io.github.agentic.ai.graph.agent.a2a.A2aRemoteAgent;
+import io.github.agentic.ai.workflow.graph.observation.trace.AgentTracer;
+import io.github.agentic.ai.workflow.graph.observation.run.ObservedRunStore;
+import io.github.agentic.ai.agent.orchestration.tools.task.TaskToolsBuilder;
+import io.github.agentic.ai.agent.orchestration.a2a.A2aRemoteAgent;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

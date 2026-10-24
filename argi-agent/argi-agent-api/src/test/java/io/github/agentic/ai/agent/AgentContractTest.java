@@ -17,10 +17,10 @@ package io.github.agentic.ai.agent;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.Usage;
-import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.ExecutionGuard;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
 import io.github.agentic.ai.runtime.execution.ExecutionStoppedException;
 import java.time.Clock;
 import java.time.Instant;

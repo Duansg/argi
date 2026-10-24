@@ -33,17 +33,17 @@ import io.github.agentic.ai.api.tool.Tool;
 import io.github.agentic.ai.api.tool.ToolContext;
 import io.github.agentic.ai.api.tool.ToolRegistry;
 import io.github.agentic.ai.api.tool.ToolResult;
-import io.github.agentic.ai.graph.agent.interceptor.authorization.ToolAuthorizationPolicy;
-import io.github.agentic.ai.graph.agent.interceptor.ModelCallHandler;
-import io.github.agentic.ai.graph.agent.interceptor.ModelInterceptor;
-import io.github.agentic.ai.graph.agent.interceptor.ModelRequest;
-import io.github.agentic.ai.graph.agent.interceptor.ModelResponse;
-import io.github.agentic.ai.graph.agent.tool.patch.ToolContextPatchPolicy;
-import io.github.agentic.ai.graph.execution.DelegationScope;
-import io.github.agentic.ai.graph.execution.ExecutionBudget;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.agent.interceptor.authorization.ToolAuthorizationPolicy;
+import io.github.agentic.ai.agent.interceptor.ModelCallHandler;
+import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
+import io.github.agentic.ai.agent.interceptor.ModelRequest;
+import io.github.agentic.ai.agent.interceptor.ModelResponse;
+import io.github.agentic.ai.agent.tool.patch.ToolContextPatchPolicy;
+import io.github.agentic.ai.runtime.execution.DelegationScope;
+import io.github.agentic.ai.runtime.execution.ExecutionBudget;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
 
 import java.time.Clock;
 import java.util.ArrayDeque;
@@ -230,7 +230,7 @@ class ReActAgentTest {
 		Tool tool = new PatchTool();
 		AgentOutcome outcome = ReActAgent.builder(client).tools(new ToolRegistry(List.of(tool)))
 				.patchPolicy(ToolContextPatchPolicy.builder().specFor("write",
-						io.github.agentic.ai.graph.agent.tool.patch.ToolContextPatchSpec.builder().writableKey("count")
+						io.github.agentic.ai.agent.tool.patch.ToolContextPatchSpec.builder().writableKey("count")
 							.keyType("count", Integer.class).build()).build())
 				.build().invoke(request(), context()).get(3, TimeUnit.SECONDS);
 		assertEquals(1, outcome.outputs().get("count"));

@@ -15,19 +15,19 @@
  */
 package io.github.agentic.ai.contract;
 
-import io.github.agentic.ai.graph.execution.definition.DefinitionKind;
-import io.github.agentic.ai.graph.execution.definition.DefinitionReference;
-import io.github.agentic.ai.graph.execution.definition.DefinitionRegistry;
-import io.github.agentic.ai.graph.execution.definition.ResolvedRunDefinitions;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionAdmission;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionRecord;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionRecordCodec;
-import io.github.agentic.ai.graph.execution.definition.RuntimeComponentDeclaration;
-import io.github.agentic.ai.graph.execution.definition.RuntimeComponentRole;
-import io.github.agentic.ai.graph.execution.definition.WorkerCapabilities;
-import io.github.agentic.ai.graph.execution.run.MemoryRunStore;
-import io.github.agentic.ai.graph.execution.run.RunSpec;
-import io.github.agentic.ai.graph.execution.run.RunStore;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionKind;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionReference;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionRegistry;
+import io.github.agentic.ai.runtime.execution.definition.ResolvedRunDefinitions;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionAdmission;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionRecord;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionRecordCodec;
+import io.github.agentic.ai.runtime.execution.definition.RuntimeComponentDeclaration;
+import io.github.agentic.ai.runtime.execution.definition.RuntimeComponentRole;
+import io.github.agentic.ai.runtime.execution.definition.WorkerCapabilities;
+import io.github.agentic.ai.runtime.execution.run.MemoryRunStore;
+import io.github.agentic.ai.runtime.execution.run.RunSpec;
+import io.github.agentic.ai.runtime.execution.run.RunStore;
 
 import java.util.List;
 import java.util.Set;

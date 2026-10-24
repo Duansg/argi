@@ -65,10 +65,10 @@ translated into this token format. No resume storage or migration is implied.
 
 | Existing capability / dependency evidence | Owner and decision |
 | --- | --- |
-| `graph.agent.Agent`: initGraph, CompiledGraph, RunnableConfig, OverAllState | Retain in Graph-backed Framework. New `agent.Agent` is an independent contract, not a facade delegating to that class. Implementations migrate under #196/#197; optional Loop bridging under #198. |
+| Graph-backed agent APIs: `CompiledGraph`, `RunnableConfig`, `OverAllState` | Retain in the graph-backed orchestration framework under `workflow.graph` and `agent.orchestration`. New `agent.Agent` is an independent contract, not a facade delegating to graph execution. |
 | `Optional<OverAllState>` / NodeOutput stream | New business request/outcome and ordered events. No implicit graph-state merge, node routing, checkpoint or serializer equivalence. |
 | Existing `AgentResult` | Keep strict-output validation/delivery result in Framework. It is not the same abstraction as AgentOutcome; future engines can report validated business output without discarding validation failures. No automatic conversion is added. |
-| `Interceptor`, `ModelRequest`, `ModelResponse`, `ModelCallHandler`, `ModelInterceptor` | Extract existing implementations into Agent API, with unchanged FQCNs and behavior. Model requests use neutral messages/tools and trusted Runtime API context. The old Framework now consumes these same classes. |
+| `Interceptor`, `ModelRequest`, `ModelResponse`, `ModelCallHandler`, `ModelInterceptor` | Shared contracts live in `io.github.agentic.ai.agent.interceptor`; the graph-backed Framework consumes these same classes. Model requests use neutral messages/tools and trusted Runtime API context. |
 | `AuthorizationDecision` and `ToolAuthorizationPolicy` | Extract into Agent API with unchanged signatures. Policies are shared; executors invoke them before every tool attempt. The historical requireMatchingTenant policy only requires a tenant; target-tenant checks need an application policy. |
 | ToolCallRequest / ToolCallExecutionContext / ToolAuthorizationInterceptor | Keep in Framework: ToolCallExecutionContext holds RunnableConfig and OverAllState. #196 must replace this lifecycle explicitly, not move a hidden graph dependency. Neutral Tool/ToolRegistry stay in argi-api. |
 | InterceptorChain / StreamingModelInterceptor | Framework owns Reactor stream composition and graph lifecycle. A Flow model response is shared, but retry/stream terminal ordering is not claimed equivalent for future engines. |
@@ -85,22 +85,20 @@ translated into this token format. No resume storage or migration is implied.
   compilation/scheduling dependencies. Rejected.
 - Putting execution contracts and stores into argi-api would couple every model
   adapter to the whole runtime. Rejected; Agent API is a separate opt-in artifact.
-- Renaming all shared interceptor classes at once would break source/binary
-  consumers without improving dependency isolation. Instead, seven existing
-  classes move without wrappers or duplicate implementations. Their historical
-  `graph.agent.interceptor` namespace is transitional, not a Graph artifact dependency.
+- Shared interceptor contracts are grouped under `agent.interceptor` so they are not
+  mistaken for graph-specific runtime types. The old `graph.agent.interceptor`
+  namespace is removed; consumers must update imports without compatibility wrappers
+  or duplicate implementations.
 - Returning OverAllState under a different name would retain graph merge and
   recovery semantics. New business contracts deliberately do not preserve those
   semantics. There is no automatic state/checkpoint conversion.
 
-Maven consumers of argi-agent-framework receive Agent API transitively; existing
-imports, configuration and stored payloads are unchanged. New consumers depend
-on argi-agent-api using the matching argi-bom (initial target: 2.1.0-RC2-SNAPSHOT).
-Manual classpaths must add the new jar and replace the old Framework jar together;
-do not mix an older Framework jar containing the extracted classes with Agent API.
-The extraction is source/binary compatible on the classpath; split historical
-packages do not promise JPMS module-path compatibility. Final package migration
-must coordinate with #182/#198 rather than duplicate types with wrappers.
+Maven consumers of `argi-agent-framework` receive Agent API transitively; consumers
+must update imports to the new package roots and use the matching `argi-bom` (initial
+target: `2.1.0-RC2-SNAPSHOT`). Manual classpaths must add the new jar and replace the
+old Framework jar together; do not mix an older Framework jar containing the moved
+classes with Agent API. This is a direct package migration with no compatibility
+wrappers, and persisted checkpoint/store data does not require a format migration.
 
 Rollback the matching Framework/Agent API/BOM set together. This extraction writes
 no new persisted state and requires no data migration. Adopting the new invocation

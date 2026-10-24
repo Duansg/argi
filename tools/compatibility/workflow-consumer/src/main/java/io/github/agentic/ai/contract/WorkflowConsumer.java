@@ -26,11 +26,11 @@ import io.github.agentic.ai.api.tool.Tool;
 import io.github.agentic.ai.api.tool.ToolContext;
 import io.github.agentic.ai.api.tool.ToolRegistry;
 import io.github.agentic.ai.api.tool.ToolResult;
-import io.github.agentic.ai.graph.execution.DelegationScope;
-import io.github.agentic.ai.graph.execution.ExecutionBudget;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.DelegationScope;
+import io.github.agentic.ai.runtime.execution.ExecutionBudget;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
 import io.github.agentic.ai.workflow.WorkflowAgent;
 import io.github.agentic.ai.workflow.WorkflowDefinition;
 import io.github.agentic.ai.workflow.WorkflowDefinitionParser;
@@ -48,8 +48,8 @@ public final class WorkflowConsumer {
 	}
 
 	public static void main(String[] args) throws Exception {
-		for (String unavailable : List.of("io.github.agentic.ai.graph.StateGraph",
-				"io.github.agentic.ai.graph.CompiledGraph", "io.github.agentic.ai.graph.RunnableConfig",
+		for (String unavailable : List.of("io.github.agentic.ai.workflow.graph.StateGraph",
+				"io.github.agentic.ai.workflow.graph.CompiledGraph", "io.github.agentic.ai.workflow.graph.RunnableConfig",
 				"reactor.core.publisher.Flux", "org.springframework.context.ApplicationContext")) {
 			try {
 				Class.forName(unavailable, false, WorkflowConsumer.class.getClassLoader());

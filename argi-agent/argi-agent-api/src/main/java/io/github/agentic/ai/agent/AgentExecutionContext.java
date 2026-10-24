@@ -15,8 +15,8 @@
  */
 package io.github.agentic.ai.agent;
 
-import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.ExecutionGuard;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
 import io.github.agentic.ai.runtime.execution.ExecutionControl;
 import java.time.Clock;
 import java.util.Objects;

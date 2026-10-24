@@ -16,8 +16,8 @@
 
 package io.github.agentic.ai.agent.studio.loader;
 
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.StateGraph;
 
 import java.util.LinkedHashMap;
 import java.util.List;

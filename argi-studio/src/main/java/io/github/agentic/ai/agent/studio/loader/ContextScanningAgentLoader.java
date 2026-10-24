@@ -17,7 +17,7 @@ package io.github.agentic.ai.agent.studio.loader;
 
 import java.util.Map;
 
-import io.github.agentic.ai.graph.agent.Agent;
+import io.github.agentic.ai.agent.orchestration.Agent;
 
 import org.springframework.context.ApplicationContext;
 
@@ -27,10 +27,10 @@ import org.springframework.context.ApplicationContext;
  *
  * <p>This loader is registered automatically when no other {@link AgentLoader} bean
  * is defined. All {@link Agent} subtypes are supported, including
- * {@link io.github.agentic.ai.graph.agent.ReactAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.SequentialAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.ParallelAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.LlmRoutingAgent}, and
+ * {@link io.github.agentic.ai.agent.orchestration.ReactAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.SequentialAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.ParallelAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.LlmRoutingAgent}, and
  * Define your agents as Spring beans and they will appear in Studio under their agent name.
  *
  * <p>To take precedence over this default, define your own {@link AgentLoader} bean

@@ -260,7 +260,7 @@ def main():
     parser.add_argument('--dirs', '-d',
                        nargs='+',
                        default=['argi-orchestration/argi-agent-framework/src/main/java',
-                               'argi-orchestration/argi-loop-core/src/main/java',
+                               'argi-orchestration/argi-workflow-graph-core/src/main/java',
                                'argi-studio/src/main/java',
                                'argi-api',
                                'argi-spring-boot-starter',

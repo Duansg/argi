@@ -15,16 +15,16 @@
  */
 package io.github.agentic.ai.contract;
 
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
-import io.github.agentic.ai.graph.execution.run.MemoryRunStore;
-import io.github.agentic.ai.graph.execution.run.RunCommit;
-import io.github.agentic.ai.graph.execution.run.RunLease;
-import io.github.agentic.ai.graph.execution.run.RunPayload;
-import io.github.agentic.ai.graph.execution.run.RunSnapshot;
-import io.github.agentic.ai.graph.execution.run.RunSpec;
-import io.github.agentic.ai.graph.execution.run.RunSpecCodec;
-import io.github.agentic.ai.graph.execution.run.RunState;
-import io.github.agentic.ai.graph.execution.run.RunStore;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.run.MemoryRunStore;
+import io.github.agentic.ai.runtime.execution.run.RunCommit;
+import io.github.agentic.ai.runtime.execution.run.RunLease;
+import io.github.agentic.ai.runtime.execution.run.RunPayload;
+import io.github.agentic.ai.runtime.execution.run.RunSnapshot;
+import io.github.agentic.ai.runtime.execution.run.RunSpec;
+import io.github.agentic.ai.runtime.execution.run.RunSpecCodec;
+import io.github.agentic.ai.runtime.execution.run.RunState;
+import io.github.agentic.ai.runtime.execution.run.RunStore;
 
 import java.time.Duration;
 import java.util.List;

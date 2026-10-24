@@ -25,27 +25,27 @@ fail() {
 	exit 1
 }
 
-[[ -d "${REPO_ROOT}/argi-orchestration/argi-loop-core" ]] || fail "argi-loop-core is missing"
+[[ -d "${REPO_ROOT}/argi-orchestration/argi-workflow-graph-core" ]] || fail "argi-workflow-graph-core is missing"
 [[ ! -e "${REPO_ROOT}/argi-graph-core" ]] || fail "legacy argi-graph-core directory still exists"
 
-grep -q '<module>argi-orchestration/argi-loop-core</module>' "${REPO_ROOT}/pom.xml" \
-	|| fail "root reactor does not declare argi-loop-core"
-grep -q '<artifactId>argi-loop-core</artifactId>' "${REPO_ROOT}/argi-orchestration/argi-loop-core/pom.xml" \
-	|| fail "Loop Core artifact id is missing"
+grep -q '<module>argi-orchestration/argi-workflow-graph-core</module>' "${REPO_ROOT}/pom.xml" \
+	|| fail "root reactor does not declare argi-workflow-graph-core"
+grep -q '<artifactId>argi-workflow-graph-core</artifactId>' "${REPO_ROOT}/argi-orchestration/argi-workflow-graph-core/pom.xml" \
+	|| fail "Workflow Graph Core artifact id is missing"
 
 for module in argi-agent/argi-agent-api argi-agent/argi-agent-core \
 	argi-orchestration/argi-workflow-core argi-runtime/argi-runtime-api \
 	argi-runtime/argi-runtime-core; do
-	if rg -n 'argi-loop-core' "${REPO_ROOT}/${module}/pom.xml"; then
-		fail "${module} must not depend on Loop Core"
+	if rg -n 'argi-workflow-graph-core' "${REPO_ROOT}/${module}/pom.xml"; then
+		fail "${module} must not depend on Workflow Graph Core"
 	fi
 done
 
 legacy_production_refs="$(rg -l 'argi-graph-core' "${REPO_ROOT}" \
 	--glob '!AGENTS.md' \
 	--glob '!docs/**' \
-	--glob '!argi-orchestration/argi-loop-core/README.md' \
-	--glob '!argi-orchestration/argi-loop-core/src/test/**' \
+	--glob '!argi-orchestration/argi-workflow-graph-core/README.md' \
+	--glob '!argi-orchestration/argi-workflow-graph-core/src/test/**' \
 	--glob '!benchmark/**' \
 	--glob '!example/**' \
 	--glob '!tools/scripts/verify-clear-room.sh' \
@@ -57,7 +57,7 @@ rg -q 'GRAPH\("graph"\)' "${REPO_ROOT}/argi-runtime/argi-runtime-api/src/main/ja
 	|| fail "DefinitionKind.GRAPH wire name is not preserved"
 rg -q 'graphId|graphVersion' "${REPO_ROOT}/argi-runtime/argi-runtime-core/src/main/java" \
 	|| fail "graph definition identifiers are not documented in runtime code"
-rg -q 'ARGI_CHAT_MESSAGE|LegacyChatRecordSupport' "${REPO_ROOT}/argi-orchestration/argi-loop-core/src/main" \
+rg -q 'ARGI_CHAT_MESSAGE|LegacyChatRecordSupport' "${REPO_ROOT}/argi-orchestration/argi-workflow-graph-core/src/main" \
 	|| fail "Loop serializer compatibility boundary is missing"
 
 for document in clear-room-baseline.md checkpoint-compatibility.md api-boundaries.md; do

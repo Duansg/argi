@@ -15,14 +15,14 @@
  */
 package io.github.agentic.ai.autoconfigure.graph;
 
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.GraphLifecycleListener;
-import io.github.agentic.ai.graph.KeyStrategy;
-import io.github.agentic.ai.graph.RunnableConfig;
-import io.github.agentic.ai.graph.StateGraph;
-import io.github.agentic.ai.graph.observation.GraphObservationLifecycleListener;
-import io.github.agentic.ai.graph.state.strategy.AppendStrategy;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.GraphLifecycleListener;
+import io.github.agentic.ai.workflow.graph.KeyStrategy;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.observation.GraphObservationLifecycleListener;
+import io.github.agentic.ai.workflow.graph.state.strategy.AppendStrategy;
 import io.micrometer.common.KeyValues;
 import io.micrometer.context.ContextRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -52,9 +52,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
-import static io.github.agentic.ai.graph.StateGraph.END;
-import static io.github.agentic.ai.graph.StateGraph.START;
-import static io.github.agentic.ai.graph.action.AsyncNodeAction.node_async;
+import static io.github.agentic.ai.workflow.graph.StateGraph.END;
+import static io.github.agentic.ai.workflow.graph.StateGraph.START;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;

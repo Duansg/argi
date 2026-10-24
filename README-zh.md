@@ -58,8 +58,13 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 | 模块 | 说明 |
 | --- | --- |
 | [API 与 Adapter](argi-api) | 中立 ChatClient 契约及 Spring AI、LangChain4j、Google ADK、AgentScope 接入 |
+| [Runtime API](argi-runtime/argi-runtime-api) | JDK-only identity、definition 与 execution-control 契约 |
+| [Runtime Core](argi-runtime/argi-runtime-core) | 中立 Run/Task 数据、codec 与 reference storage |
+| [Agent API](argi-agent/argi-agent-api) | 引擎无关的 Agent invocation 与共享 interceptor 契约 |
+| [Agent Core](argi-agent/argi-agent-core) | 独立于 Graph 的 ReAct 执行循环与工具生命周期 |
 | [Agent Framework](argi-orchestration/argi-agent-framework) | 智能体开发与多智能体编排 |
-| [Loop Core](argi-orchestration/argi-loop-core) | 有状态图执行、持久化和工作流运行时 |
+| [Workflow Graph Core](argi-orchestration/argi-workflow-graph-core) | 有状态图执行、持久化和工作流运行时 |
+| [Workflow Core](argi-orchestration/argi-workflow-core) | 版本化声明式工作流定义与独立执行 |
 | [Studio](argi-studio) | Agent 可视化调试界面 |
 | [Sandbox](https://github.com/agentic-ai-java/argi-extensions/tree/main/sandbox/argi-sandbox) | 工具调用的可选隔离执行环境，由 Extensions 维护 |
 | [Spring Boot Starters](argi-spring-boot-starter) | 内置图节点、图可观测性与四个 Adapter 的自动配置 |
@@ -72,7 +77,7 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 - [项目概览](https://agentic-ai-java.github.io/argi-website/docs/overview)
 - [快速开始](https://agentic-ai-java.github.io/argi-website/docs/quick-start)
 - [Agent Framework 教程](https://agentic-ai-java.github.io/argi-website/docs/frameworks/agent-framework/tutorials/agents)
-- [Loop Core 快速开始](https://agentic-ai-java.github.io/argi-website/docs/frameworks/loop-core/quick-start)
+- [Workflow Graph Core 快速开始](https://agentic-ai-java.github.io/argi-website/docs/frameworks/workflow-graph-core/quick-start)
 - [Clear Room 基线与命名决策](docs/architecture/clear-room-baseline.md)
 - [Checkpoint 兼容契约](docs/architecture/checkpoint-compatibility.md)
 - [Agent、Studio 与 serializer 边界](docs/architecture/api-boundaries.md)

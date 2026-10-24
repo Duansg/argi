@@ -15,7 +15,7 @@
  */
 package io.github.agentic.ai.agent.studio.loader;
 
-import io.github.agentic.ai.graph.agent.Agent;
+import io.github.agentic.ai.agent.orchestration.Agent;
 import org.jspecify.annotations.NonNull;
 
 import java.util.List;
@@ -28,10 +28,10 @@ import java.util.List;
  * {@link Agent} beans from the Spring {@link org.springframework.context.ApplicationContext}
  * and exposes them by their {@link Agent#name()}. You can therefore use Studio without
  * implementing this interface: just define your agents as {@code @Bean}s. All {@link Agent}
- * subtypes are supported, including {@link io.github.agentic.ai.graph.agent.ReactAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.SequentialAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.ParallelAgent},
- * {@link io.github.agentic.ai.graph.agent.flow.agent.LlmRoutingAgent}, and
+ * subtypes are supported, including {@link io.github.agentic.ai.agent.orchestration.ReactAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.SequentialAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.ParallelAgent},
+ * {@link io.github.agentic.ai.agent.orchestration.flow.agent.LlmRoutingAgent}, and
  *
  * <p><strong>Custom loader:</strong> To control which agents are visible or how they are
  * named, define your own {@code AgentLoader} bean. You can extend {@link AbstractAgentLoader}

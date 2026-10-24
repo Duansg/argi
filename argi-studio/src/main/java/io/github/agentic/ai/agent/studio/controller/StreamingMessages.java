@@ -15,8 +15,8 @@
  */
 package io.github.agentic.ai.agent.studio.controller;
 
-import io.github.agentic.ai.graph.NodeOutput;
-import io.github.agentic.ai.graph.streaming.StreamingOutput;
+import io.github.agentic.ai.workflow.graph.NodeOutput;
+import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
 import java.util.List;
 import java.util.stream.IntStream;
 import io.github.agentic.ai.api.chat.Usage;

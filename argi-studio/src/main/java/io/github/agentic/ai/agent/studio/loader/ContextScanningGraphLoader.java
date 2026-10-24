@@ -16,7 +16,7 @@
 
 package io.github.agentic.ai.agent.studio.loader;
 
-import io.github.agentic.ai.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
 
 import java.util.Map;
 
@@ -25,7 +25,7 @@ import org.springframework.context.ApplicationContext;
 /**
  * Default {@link GraphLoader} that discovers all {@link CompiledGraph} beans from the
  * Spring {@link ApplicationContext} and exposes them by their graph name (from
- * {@link io.github.agentic.ai.graph.StateGraph#getName()} or bean name).
+ * {@link io.github.agentic.ai.workflow.graph.StateGraph#getName()} or bean name).
  *
  * <p>This loader is registered automatically when no other {@link GraphLoader} bean,
  * and when {@link CompiledGraph} beans exist, is defined.

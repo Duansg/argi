@@ -59,7 +59,7 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 | --- | --- |
 | [API and Adapters](argi-api) | Framework-neutral ChatClient contracts and Spring AI, LangChain4j, Google ADK, and AgentScope adapters |
 | [Agent Framework](argi-orchestration/argi-agent-framework) | Agent development and multi-agent orchestration |
-| [Loop Core](argi-orchestration/argi-loop-core) | Stateful graph execution, persistence, and workflow runtime |
+| [Workflow Graph Core](argi-orchestration/argi-workflow-graph-core) | Stateful graph execution, persistence, and workflow runtime |
 | [Runtime API](argi-runtime/argi-runtime-api) | JDK-only identity, definition and execution-control contracts |
 | [Agent API](argi-agent/argi-agent-api) | Engine-neutral agent invocation and shared interception contracts |
 | [Agent Core](argi-agent/argi-agent-core) | Graph-independent ReAct execution loop and tool lifecycle |
@@ -77,7 +77,7 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 - [Overview](https://agentic-ai-java.github.io/argi-website/en/docs/overview)
 - [Quick Start](https://agentic-ai-java.github.io/argi-website/en/docs/quick-start)
 - [Agent Framework tutorials](https://agentic-ai-java.github.io/argi-website/en/docs/frameworks/agent-framework/tutorials/agents)
-- [Loop Core Quick Start](https://agentic-ai-java.github.io/argi-website/en/docs/frameworks/loop-core/quick-start)
+- [Workflow Graph Core Quick Start](https://agentic-ai-java.github.io/argi-website/en/docs/frameworks/workflow-graph-core/quick-start)
 - [Clear Room baseline](docs/architecture/clear-room-baseline.md)
 - [Checkpoint compatibility contract](docs/architecture/checkpoint-compatibility.md)
 - [Agent, Studio, and serializer boundaries](docs/architecture/api-boundaries.md)

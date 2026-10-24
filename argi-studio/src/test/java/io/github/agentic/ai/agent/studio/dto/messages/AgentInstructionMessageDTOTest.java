@@ -16,7 +16,7 @@
 package io.github.agentic.ai.agent.studio.dto.messages;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
-import io.github.agentic.ai.graph.serializer.AgentInstructionMessage;
+import io.github.agentic.ai.workflow.graph.serializer.AgentInstructionMessage;
 
 import org.junit.jupiter.api.Test;
 

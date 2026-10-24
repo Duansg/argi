@@ -22,6 +22,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
+import java.util.concurrent.atomic.AtomicReference;
 
 /** Framework-neutral chat client consumed by ARGI graph and agent runtimes. */
 public interface ChatClient {
@@ -46,6 +47,12 @@ public interface ChatClient {
 	default ChatResponse callBlocking(ChatRequest request) {
 		CompletableFuture<ChatResponse> pending = call(Objects.requireNonNull(request, "request must not be null"))
 			.toCompletableFuture();
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		pending.whenComplete((response, error) -> {
+			if (error != null) {
+				failure.set(error);
+			}
+		});
 		try {
 			return pending.get();
 		}
@@ -53,6 +60,12 @@ public interface ChatClient {
 			pending.cancel(true);
 			Thread.currentThread().interrupt();
 			throw new CancellationException("Model call interrupted");
+		}
+		catch (CancellationException cancelled) {
+			if (failure.get() instanceof CancellationException original) {
+				throw original;
+			}
+			throw cancelled;
 		}
 		catch (ExecutionException failed) {
 			if (failed.getCause() instanceof RuntimeException cause) {

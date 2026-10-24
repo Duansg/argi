@@ -55,7 +55,7 @@ argi/
 │   ├── argi-agent-api/
 │   └── argi-agent-core/
 ├── argi-orchestration/          # Graph, Workflow, and framework orchestration
-│   ├── argi-loop-core/
+│   ├── argi-workflow-graph-core/
 │   ├── argi-workflow-core/
 │   └── argi-agent-framework/
 ├── argi-studio/                 # Embedded UI for debugging agents visually

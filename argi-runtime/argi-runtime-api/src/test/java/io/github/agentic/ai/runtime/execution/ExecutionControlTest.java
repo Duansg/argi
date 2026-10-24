@@ -15,10 +15,6 @@
  */
 package io.github.agentic.ai.runtime.execution;
 
-import io.github.agentic.ai.graph.checkpoint.lease.ExecutionGuard;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
 
 import java.time.Clock;
 import java.time.Instant;

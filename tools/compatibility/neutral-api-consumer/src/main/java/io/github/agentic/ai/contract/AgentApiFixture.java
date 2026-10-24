@@ -20,25 +20,25 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 
-import io.github.agentic.ai.graph.OverAllState;
-import io.github.agentic.ai.graph.RunnableConfig;
-import io.github.agentic.ai.graph.agent.ReactAgent;
-import io.github.agentic.ai.graph.agent.flow.agent.LlmRoutingAgent;
-import io.github.agentic.ai.graph.agent.flow.agent.LoopAgent;
-import io.github.agentic.ai.graph.agent.flow.agent.ParallelAgent;
-import io.github.agentic.ai.graph.agent.flow.agent.SequentialAgent;
-import io.github.agentic.ai.graph.agent.flow.agent.loop.LoopMode;
-import io.github.agentic.ai.graph.agent.hook.AgentHook;
-import io.github.agentic.ai.graph.agent.interceptor.ModelCallHandler;
-import io.github.agentic.ai.graph.agent.interceptor.ModelInterceptor;
-import io.github.agentic.ai.graph.agent.interceptor.ModelRequest;
-import io.github.agentic.ai.graph.agent.interceptor.ModelResponse;
-import io.github.agentic.ai.graph.agent.interceptor.ToolCallHandler;
-import io.github.agentic.ai.graph.agent.interceptor.ToolCallRequest;
-import io.github.agentic.ai.graph.agent.interceptor.ToolCallResponse;
-import io.github.agentic.ai.graph.agent.interceptor.ToolInterceptor;
-import io.github.agentic.ai.graph.agent.tools.task.BoundedTaskRepository;
-import io.github.agentic.ai.graph.agent.tools.task.TaskToolsBuilder;
+import io.github.agentic.ai.workflow.graph.OverAllState;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.agent.orchestration.ReactAgent;
+import io.github.agentic.ai.agent.orchestration.flow.agent.LlmRoutingAgent;
+import io.github.agentic.ai.agent.orchestration.flow.agent.LoopAgent;
+import io.github.agentic.ai.agent.orchestration.flow.agent.ParallelAgent;
+import io.github.agentic.ai.agent.orchestration.flow.agent.SequentialAgent;
+import io.github.agentic.ai.agent.orchestration.flow.agent.loop.LoopMode;
+import io.github.agentic.ai.agent.orchestration.hook.AgentHook;
+import io.github.agentic.ai.agent.interceptor.ModelCallHandler;
+import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
+import io.github.agentic.ai.agent.interceptor.ModelRequest;
+import io.github.agentic.ai.agent.interceptor.ModelResponse;
+import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallHandler;
+import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallRequest;
+import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallResponse;
+import io.github.agentic.ai.agent.orchestration.interceptor.ToolInterceptor;
+import io.github.agentic.ai.agent.orchestration.tools.task.BoundedTaskRepository;
+import io.github.agentic.ai.agent.orchestration.tools.task.TaskToolsBuilder;
 
 import io.github.agentic.ai.api.chat.ChatClient;
 
@@ -122,8 +122,8 @@ final class AgentApiFixture {
 		}
 
 		@Override
-		public Map<String, io.github.agentic.ai.graph.KeyStrategy> getKeyStrategys() {
-			return Map.of("messages", io.github.agentic.ai.graph.KeyStrategy.APPEND);
+		public Map<String, io.github.agentic.ai.workflow.graph.KeyStrategy> getKeyStrategys() {
+			return Map.of("messages", io.github.agentic.ai.workflow.graph.KeyStrategy.APPEND);
 		}
 
 	}

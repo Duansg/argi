@@ -16,8 +16,8 @@
 package io.github.agentic.ai.agent.studio.dto.messages;
 
 import io.github.agentic.ai.api.chat.ToolCall;
-import io.github.agentic.ai.graph.OverAllState;
-import io.github.agentic.ai.graph.action.InterruptionMetadata;
+import io.github.agentic.ai.workflow.graph.OverAllState;
+import io.github.agentic.ai.workflow.graph.action.InterruptionMetadata;
 
 import java.util.ArrayList;
 import java.util.HashMap;

@@ -6,7 +6,7 @@
 		</encoder>
 	</appender>
 
-	<logger name="io.github.agentic.ai.graph" level="INFO" additivity="false">
+	<logger name="io.github.agentic.ai.workflow.graph" level="INFO" additivity="false">
 		<appender-ref ref="CONSOLE"/>
 	</logger>
 
