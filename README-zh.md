@@ -58,8 +58,8 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 | 模块 | 说明 |
 | --- | --- |
 | [API 与 Adapter](argi-api) | 中立 ChatClient 契约及 Spring AI、LangChain4j、Google ADK、AgentScope 接入 |
-| [Agent Framework](argi-agent-framework) | 智能体开发与多智能体编排 |
-| [Loop Core](argi-loop-core) | 有状态图执行、持久化和工作流运行时 |
+| [Agent Framework](argi-orchestration/argi-agent-framework) | 智能体开发与多智能体编排 |
+| [Loop Core](argi-orchestration/argi-loop-core) | 有状态图执行、持久化和工作流运行时 |
 | [Studio](argi-studio) | Agent 可视化调试界面 |
 | [Sandbox](https://github.com/agentic-ai-java/argi-extensions/tree/main/sandbox/argi-sandbox) | 工具调用的可选隔离执行环境，由 Extensions 维护 |
 | [Spring Boot Starters](argi-spring-boot-starter) | 内置图节点、图可观测性与四个 Adapter 的自动配置 |

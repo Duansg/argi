@@ -23,15 +23,15 @@ maintained in the optional Extensions artifacts:
 Those adapters consume `argi-loop-core` and preserve the existing checkpoint
 fields, serializer markers, table names, Redis keys and namespace rules. Loop
 Core deliberately has no database or Redis driver dependency. See
-[`persistence-ownership.md`](../docs/architecture/persistence-ownership.md) for
+[`persistence-ownership.md`](../../docs/architecture/persistence-ownership.md) for
 the ownership matrix and migration steps.
 
 ## Runtime contract extraction
 
 Identity, definition and execution-control contracts are provided by
-[`argi-runtime-api`](../argi-runtime-api/README.md), which is JDK-only.
+[`argi-runtime-api`](../../argi-runtime/argi-runtime-api/README.md), which is JDK-only.
 Run/Task data, codecs, definition admission and reference storage are provided by
-[`argi-runtime-core`](../argi-runtime-core/README.md), which depends only on Runtime
+[`argi-runtime-core`](../../argi-runtime/argi-runtime-core/README.md), which depends only on Runtime
 API and Jackson. Graph supplies both dependencies transitively. Existing class
 names and v1 data remain readable; neutral v2 adoption and rollback are documented
 in Runtime Core. Graph tracing remains an optional integration for runtime-only

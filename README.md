@@ -58,13 +58,13 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 | Module | Description |
 | --- | --- |
 | [API and Adapters](argi-api) | Framework-neutral ChatClient contracts and Spring AI, LangChain4j, Google ADK, and AgentScope adapters |
-| [Agent Framework](argi-agent-framework) | Agent development and multi-agent orchestration |
-| [Loop Core](argi-loop-core) | Stateful graph execution, persistence, and workflow runtime |
-| [Runtime API](argi-runtime-api) | JDK-only identity, definition and execution-control contracts |
-| [Agent API](argi-agent-api) | Engine-neutral agent invocation and shared interception contracts |
-| [Agent Core](argi-agent-core) | Graph-independent ReAct execution loop and tool lifecycle |
-| [Workflow Core](argi-workflow-core) | Versioned declarative workflow definitions and independent execution |
-| [Runtime Core](argi-runtime-core) | Engine-neutral Run/Task data, codecs and reference storage |
+| [Agent Framework](argi-orchestration/argi-agent-framework) | Agent development and multi-agent orchestration |
+| [Loop Core](argi-orchestration/argi-loop-core) | Stateful graph execution, persistence, and workflow runtime |
+| [Runtime API](argi-runtime/argi-runtime-api) | JDK-only identity, definition and execution-control contracts |
+| [Agent API](argi-agent/argi-agent-api) | Engine-neutral agent invocation and shared interception contracts |
+| [Agent Core](argi-agent/argi-agent-core) | Graph-independent ReAct execution loop and tool lifecycle |
+| [Workflow Core](argi-orchestration/argi-workflow-core) | Versioned declarative workflow definitions and independent execution |
+| [Runtime Core](argi-runtime/argi-runtime-core) | Engine-neutral Run/Task data, codecs and reference storage |
 | [Studio](argi-studio) | Visual debugging UI for agents |
 | [Sandbox](https://github.com/agentic-ai-java/argi-extensions/tree/main/sandbox/argi-sandbox) | Optional isolated execution environment for tool calls, maintained in Extensions |
 | [Spring Boot Starters](argi-spring-boot-starter) | Built-in graph nodes, graph observability, and four adapter auto-configurations |

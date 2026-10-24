@@ -259,8 +259,8 @@ def main():
     parser = argparse.ArgumentParser(description='Check Chinese content in Java and frontend code')
     parser.add_argument('--dirs', '-d',
                        nargs='+',
-                       default=['argi-agent-framework/src/main/java',
-                               'argi-loop-core/src/main/java',
+                       default=['argi-orchestration/argi-agent-framework/src/main/java',
+                               'argi-orchestration/argi-loop-core/src/main/java',
                                'argi-studio/src/main/java',
                                'argi-api',
                                'argi-spring-boot-starter',

@@ -108,7 +108,7 @@ if grep -E 'OverAllState|RunnableConfig|CompiledGraph|StateGraph|initGraph|getAn
     echo "Agent invocation signatures expose graph execution" >&2
     exit 1
 fi
-framework_jar="${REPO_ROOT}/argi-agent-framework/target/$(basename "${agent_api_jar}" | sed s/argi-agent-api/argi-agent-framework/)"
+framework_jar="${REPO_ROOT}/argi-orchestration/argi-agent-framework/target/$(basename "${agent_api_jar}" | sed s/argi-agent-api/argi-agent-framework/)"
 jar tf "${framework_jar}" | grep '.class$' | sort > "${AGENT_FIXTURE}/target/framework-classes.txt"
 jar tf "${agent_api_jar}" | grep '.class$' | sort > "${AGENT_FIXTURE}/target/api-classes.txt"
 if [[ -n "$(comm -12 "${AGENT_FIXTURE}/target/framework-classes.txt" "${AGENT_FIXTURE}/target/api-classes.txt")" ]]; then
@@ -165,7 +165,7 @@ if grep -q "not found" "${RUNTIME_CORE_FIXTURE}/target/bytecode-dependencies.txt
     exit 1
 fi
 
-loop_jar="${REPO_ROOT}/argi-loop-core/target/$(basename "${runtime_core_jar}" | sed s/argi-runtime-core/argi-loop-core/)"
+loop_jar="${REPO_ROOT}/argi-orchestration/argi-loop-core/target/$(basename "${runtime_core_jar}" | sed s/argi-runtime-core/argi-loop-core/)"
 jar tf "${loop_jar}" | grep '.class$' | sort > "${RUNTIME_CORE_FIXTURE}/target/graph-classes.txt"
 for dependency in "${runtime_jars[@]}"; do
     case "$(basename "${dependency}")" in

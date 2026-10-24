@@ -49,7 +49,7 @@ adapter that delegates to the old engine.
 Workflow will execute independently of Loop. ReAct will also have its own
 execution loop. Neither engine is made independent by this extraction alone.
 Their shared invocation boundary and capability ownership map are now in
-[Agent API](../argi-agent-api/README.md), which depends only on Runtime API and API.
+[Agent API](../../argi-agent/argi-agent-api/README.md), which depends only on Runtime API and API.
 
 ## Package and compatibility decision
 

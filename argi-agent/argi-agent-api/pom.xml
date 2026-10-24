@@ -20,12 +20,31 @@
         <groupId>io.github.agentic-ai-java</groupId>
         <artifactId>argi</artifactId>
         <version>${revision}</version>
+        <relativePath>../../pom.xml</relativePath>
     </parent>
-    <artifactId>argi-runtime-api</artifactId>
+    <artifactId>argi-agent-api</artifactId>
     <packaging>jar</packaging>
-    <name>ARGI Runtime API</name>
-    <description>JDK-only identity and execution constraint contracts</description>
+    <name>ARGI Agent API</name>
+    <description>Engine-neutral agent execution and shared model interception contracts</description>
     <dependencies>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>io.github.agentic-ai-java</groupId>
+            <artifactId>argi-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.github.agentic-ai-java</groupId>
+            <artifactId>argi-runtime-api</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
