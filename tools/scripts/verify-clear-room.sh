@@ -36,28 +36,30 @@ grep -q '<artifactId>argi-workflow-graph-core</artifactId>' "${REPO_ROOT}/argi-o
 for module in argi-agent/argi-agent-api argi-agent/argi-agent-core \
 	argi-orchestration/argi-workflow-core argi-runtime/argi-runtime-api \
 	argi-runtime/argi-runtime-core; do
-	if rg -n 'argi-workflow-graph-core' "${REPO_ROOT}/${module}/pom.xml"; then
+	if grep -n 'argi-workflow-graph-core' "${REPO_ROOT}/${module}/pom.xml"; then
 		fail "${module} must not depend on Workflow Graph Core"
 	fi
 done
 
-legacy_production_refs="$(rg -l 'argi-graph-core' "${REPO_ROOT}" \
-	--glob '!AGENTS.md' \
-	--glob '!docs/**' \
-	--glob '!argi-orchestration/argi-workflow-graph-core/README.md' \
-	--glob '!argi-orchestration/argi-workflow-graph-core/src/test/**' \
-	--glob '!benchmark/**' \
-	--glob '!example/**' \
-	--glob '!tools/scripts/verify-clear-room.sh' \
-	--glob '!**/target/**' \
-	--glob '!**/.flattened-pom.xml' || true)"
+legacy_production_refs="$(git -C "${REPO_ROOT}" grep -l 'argi-graph-core' -- \
+	. \
+	':(exclude)AGENTS.md' \
+	':(exclude)docs/**' \
+	':(exclude)argi-orchestration/argi-workflow-graph-core/README.md' \
+	':(exclude)argi-orchestration/argi-workflow-graph-core/src/test/**' \
+	':(exclude)benchmark/**' \
+	':(exclude)example/**' \
+	':(exclude)tools/scripts/verify-clear-room.sh' \
+	':(exclude)**/target/**' \
+	':(exclude)**/.flattened-pom.xml' || true)"
 [[ -z "${legacy_production_refs}" ]] || fail "legacy artifact references remain:${legacy_production_refs}"
 
-rg -q 'GRAPH\("graph"\)' "${REPO_ROOT}/argi-runtime/argi-runtime-api/src/main/java" \
+git -C "${REPO_ROOT}" grep -q 'GRAPH("graph")' -- argi-runtime/argi-runtime-api/src/main/java \
 	|| fail "DefinitionKind.GRAPH wire name is not preserved"
-rg -q 'graphId|graphVersion' "${REPO_ROOT}/argi-runtime/argi-runtime-core/src/main/java" \
+git -C "${REPO_ROOT}" grep -q -E 'graphId|graphVersion' -- argi-runtime/argi-runtime-core/src/main/java \
 	|| fail "graph definition identifiers are not documented in runtime code"
-rg -q 'ARGI_CHAT_MESSAGE|LegacyChatRecordSupport' "${REPO_ROOT}/argi-orchestration/argi-workflow-graph-core/src/main" \
+git -C "${REPO_ROOT}" grep -q -E 'ARGI_CHAT_MESSAGE|LegacyChatRecordSupport' \
+	-- argi-orchestration/argi-workflow-graph-core/src/main \
 	|| fail "Loop serializer compatibility boundary is missing"
 
 for document in clear-room-baseline.md checkpoint-compatibility.md api-boundaries.md; do
@@ -66,12 +68,12 @@ for document in clear-room-baseline.md checkpoint-compatibility.md api-boundarie
 done
 
 if [[ -d "${REPO_ROOT}/benchmark" ]]; then
-	if rg -n 'argi-graph-core' "${REPO_ROOT}/benchmark" --glob '*.xml' --glob '!**/target/**'; then
+	if grep -R -n --include='*.xml' --exclude-dir=target 'argi-graph-core' "${REPO_ROOT}/benchmark"; then
 		fail "benchmark submodule still references argi-graph-core"
 	fi
 fi
 if [[ -d "${REPO_ROOT}/example" ]]; then
-	if rg -n 'argi-graph-core' "${REPO_ROOT}/example" --glob '*.xml' --glob '!**/target/**'; then
+	if grep -R -n --include='*.xml' --exclude-dir=target 'argi-graph-core' "${REPO_ROOT}/example"; then
 		fail "example submodule still references argi-graph-core"
 	fi
 fi
