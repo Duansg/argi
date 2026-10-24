@@ -15,12 +15,12 @@
  */
 package io.github.agentic.ai.autoconfigure.graph;
 
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.StateGraph;
-import io.github.agentic.ai.graph.observation.GraphObservationLifecycleListener;
-import io.github.agentic.ai.graph.observation.edge.GraphEdgeObservationHandler;
-import io.github.agentic.ai.graph.observation.graph.GraphObservationHandler;
-import io.github.agentic.ai.graph.observation.node.GraphNodeObservationHandler;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.observation.GraphObservationLifecycleListener;
+import io.github.agentic.ai.workflow.graph.observation.edge.GraphEdgeObservationHandler;
+import io.github.agentic.ai.workflow.graph.observation.graph.GraphObservationHandler;
+import io.github.agentic.ai.workflow.graph.observation.node.GraphNodeObservationHandler;
 import io.micrometer.context.ContextRegistry;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.observation.ObservationRegistry;

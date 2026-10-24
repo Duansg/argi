@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-package io.github.agentic.ai.graph;
+package io.github.agentic.ai.workflow.graph;
 
-import io.github.agentic.ai.graph.exception.GraphStateException;
-import io.github.agentic.ai.graph.state.strategy.AppendStrategy;
-import io.github.agentic.ai.graph.state.strategy.ReplaceStrategy;
+import io.github.agentic.ai.workflow.graph.exception.GraphStateException;
+import io.github.agentic.ai.workflow.graph.state.strategy.AppendStrategy;
+import io.github.agentic.ai.workflow.graph.state.strategy.ReplaceStrategy;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -26,9 +26,9 @@ import java.util.Map;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
-import static io.github.agentic.ai.graph.StateGraph.END;
-import static io.github.agentic.ai.graph.StateGraph.START;
-import static io.github.agentic.ai.graph.action.AsyncNodeAction.node_async;
+import static io.github.agentic.ai.workflow.graph.StateGraph.END;
+import static io.github.agentic.ai.workflow.graph.StateGraph.START;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 
 /**
  * Minimal graph configuration for Studio integration tests. Creates a simple echo-style graph

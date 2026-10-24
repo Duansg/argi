@@ -20,13 +20,13 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-import io.github.agentic.ai.graph.execution.DelegationScope;
-import io.github.agentic.ai.graph.execution.ExecutionBudget;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContextReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContextResolver;
+import io.github.agentic.ai.runtime.execution.DelegationScope;
+import io.github.agentic.ai.runtime.execution.ExecutionBudget;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContextReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContextResolver;
 
 /** Executes the shared identity contract with only its jar and the JDK available. */
 public final class RuntimeApiConsumer {
@@ -35,8 +35,8 @@ public final class RuntimeApiConsumer {
 	}
 
 	public static void main(String[] args) throws Exception {
-		for (String unavailable : Set.of("io.github.agentic.ai.graph.StateGraph",
-			"io.github.agentic.ai.graph.RunnableConfig", "io.github.agentic.ai.graph.agent.Agent",
+		for (String unavailable : Set.of("io.github.agentic.ai.workflow.graph.StateGraph",
+			"io.github.agentic.ai.workflow.graph.RunnableConfig", "io.github.agentic.ai.agent.orchestration.Agent",
 			"io.github.agentic.ai.api.chat.ChatClient", "org.springframework.context.ApplicationContext",
 			"reactor.core.publisher.Flux", "com.fasterxml.jackson.databind.ObjectMapper")) {
 			try {

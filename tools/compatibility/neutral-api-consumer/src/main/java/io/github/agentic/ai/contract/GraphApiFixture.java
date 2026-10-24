@@ -17,15 +17,15 @@ package io.github.agentic.ai.contract;
 
 import java.util.Map;
 
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.KeyStrategy;
-import io.github.agentic.ai.graph.RunnableConfig;
-import io.github.agentic.ai.graph.StateGraph;
-import io.github.agentic.ai.graph.checkpoint.config.SaverConfig;
-import io.github.agentic.ai.graph.checkpoint.savers.MemorySaver;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.KeyStrategy;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.checkpoint.config.SaverConfig;
+import io.github.agentic.ai.workflow.graph.checkpoint.savers.MemorySaver;
 
-import static io.github.agentic.ai.graph.action.AsyncNodeAction.node_async;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 
 final class GraphApiFixture {
 

@@ -17,8 +17,8 @@
 package io.github.agentic.ai;
 
 import io.github.agentic.ai.agentic.AgentStaticLoader;
-import io.github.agentic.ai.graph.GraphTestConfig;
-import io.github.agentic.ai.graph.SimpleGraphConfig;
+import io.github.agentic.ai.workflow.graph.GraphTestConfig;
+import io.github.agentic.ai.workflow.graph.SimpleGraphConfig;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;

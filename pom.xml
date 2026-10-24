@@ -52,13 +52,13 @@
         <module>argi-api/argi-adapter-spring-ai</module>
         <module>argi-api/argi-adapter-langchain4j</module>
         <module>argi-api/argi-adapter-google-adk</module>
-        <module>argi-runtime-api</module>
-        <module>argi-runtime-core</module>
-        <module>argi-agent-api</module>
-        <module>argi-agent-core</module>
-        <module>argi-workflow-core</module>
-        <module>argi-loop-core</module>
-        <module>argi-agent-framework</module>
+        <module>argi-runtime/argi-runtime-api</module>
+        <module>argi-runtime/argi-runtime-core</module>
+        <module>argi-agent/argi-agent-api</module>
+        <module>argi-agent/argi-agent-core</module>
+        <module>argi-orchestration/argi-workflow-core</module>
+        <module>argi-orchestration/argi-workflow-graph-core</module>
+        <module>argi-orchestration/argi-agent-framework</module>
         <module>argi-studio</module>
 
         <!-- ARGI Spring Boot Starters -->

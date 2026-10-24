@@ -17,7 +17,7 @@
 package io.github.agentic.ai.agent.studio.service;
 
 import io.github.agentic.ai.agent.studio.loader.AgentLoader;
-import io.github.agentic.ai.graph.agent.Agent;
+import io.github.agentic.ai.agent.orchestration.Agent;
 
 import org.springframework.stereotype.Component;
 

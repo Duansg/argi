@@ -16,23 +16,23 @@
 
 package io.github.agentic.ai.contract;
 
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
-import io.github.agentic.ai.graph.execution.definition.DefinitionKind;
-import io.github.agentic.ai.graph.execution.definition.DefinitionReference;
-import io.github.agentic.ai.graph.execution.definition.DefinitionRegistry;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionAdmission;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionRecord;
-import io.github.agentic.ai.graph.execution.definition.RunDefinitionRecordCodec;
-import io.github.agentic.ai.graph.execution.definition.WorkerCapabilities;
-import io.github.agentic.ai.graph.execution.run.MemoryRunStore;
-import io.github.agentic.ai.graph.execution.run.RunCommit;
-import io.github.agentic.ai.graph.execution.run.RunEntry;
-import io.github.agentic.ai.graph.execution.run.RunPayload;
-import io.github.agentic.ai.graph.execution.run.RunSpec;
-import io.github.agentic.ai.graph.execution.run.RunSpecCodec;
-import io.github.agentic.ai.graph.execution.run.RunState;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionKind;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionReference;
+import io.github.agentic.ai.runtime.execution.definition.DefinitionRegistry;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionAdmission;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionRecord;
+import io.github.agentic.ai.runtime.execution.definition.RunDefinitionRecordCodec;
+import io.github.agentic.ai.runtime.execution.definition.WorkerCapabilities;
+import io.github.agentic.ai.runtime.execution.run.MemoryRunStore;
+import io.github.agentic.ai.runtime.execution.run.RunCommit;
+import io.github.agentic.ai.runtime.execution.run.RunEntry;
+import io.github.agentic.ai.runtime.execution.run.RunPayload;
+import io.github.agentic.ai.runtime.execution.run.RunSpec;
+import io.github.agentic.ai.runtime.execution.run.RunSpecCodec;
+import io.github.agentic.ai.runtime.execution.run.RunState;
 import io.github.agentic.ai.runtime.execution.ExecutionControl;
 import java.time.Clock;
 import java.time.Duration;
@@ -55,7 +55,7 @@ public final class RuntimeCoreConsumer {
 
 	public static void main(String[] args) throws Exception {
 		DefinitionKind kind = DefinitionKind.fromWireName(args[0]);
-		for (String absent : Set.of("io.github.agentic.ai.graph.StateGraph", "io.github.agentic.ai.graph.agent.Agent",
+		for (String absent : Set.of("io.github.agentic.ai.workflow.graph.StateGraph", "io.github.agentic.ai.agent.orchestration.Agent",
 				"reactor.core.publisher.Flux", "org.springframework.context.ApplicationContext",
 				"io.micrometer.observation.ObservationRegistry")) {
 			try {

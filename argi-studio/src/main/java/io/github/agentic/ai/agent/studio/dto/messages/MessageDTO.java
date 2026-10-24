@@ -17,8 +17,8 @@ package io.github.agentic.ai.agent.studio.dto.messages;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
 
-import io.github.agentic.ai.graph.action.InterruptionMetadata;
-import io.github.agentic.ai.graph.serializer.AgentInstructionMessage;
+import io.github.agentic.ai.workflow.graph.action.InterruptionMetadata;
+import io.github.agentic.ai.workflow.graph.serializer.AgentInstructionMessage;
 import java.util.List;
 
 import com.fasterxml.jackson.annotation.JsonSubTypes;

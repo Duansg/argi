@@ -15,7 +15,7 @@
  */
 package io.github.agentic.ai.agent.studio.loader;
 
-import io.github.agentic.ai.graph.agent.Agent;
+import io.github.agentic.ai.agent.orchestration.Agent;
 
 import java.util.LinkedHashMap;
 import java.util.List;

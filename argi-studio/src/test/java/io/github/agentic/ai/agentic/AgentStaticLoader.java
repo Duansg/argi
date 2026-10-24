@@ -17,10 +17,10 @@
 package io.github.agentic.ai.agentic;
 
 import io.github.agentic.ai.agent.studio.loader.AgentLoader;
-import io.github.agentic.ai.graph.GraphRepresentation;
-import io.github.agentic.ai.graph.agent.BaseAgent;
-import io.github.agentic.ai.graph.agent.ReactAgent;
-import io.github.agentic.ai.graph.checkpoint.savers.MemorySaver;
+import io.github.agentic.ai.workflow.graph.GraphRepresentation;
+import io.github.agentic.ai.agent.orchestration.BaseAgent;
+import io.github.agentic.ai.agent.orchestration.ReactAgent;
+import io.github.agentic.ai.workflow.graph.checkpoint.savers.MemorySaver;
 
 import org.jspecify.annotations.NonNull;
 import org.springframework.ai.chat.messages.AssistantMessage;

@@ -30,11 +30,14 @@
 "area/graph":
   - changed-files:
       - any-glob-to-any-file:
-          - "argi-loop-core/**/*"
+          - "argi-orchestration/argi-workflow-graph-core/**/*"
 "area/core":
   - changed-files:
       - any-glob-to-any-file:
-          - "argi-agent-framework/**/*"
+          - "argi-orchestration/argi-agent-framework/**/*"
+          - "argi-runtime/**/*"
+          - "argi-agent/**/*"
+          - "argi-orchestration/argi-workflow-core/**/*"
           - "argi-bom/**/*"
           - "argi-api/**/*"
           - "argi-spring-boot-starter/**/*"

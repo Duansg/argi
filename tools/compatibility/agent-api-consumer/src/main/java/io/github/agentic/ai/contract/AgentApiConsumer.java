@@ -23,14 +23,14 @@ import io.github.agentic.ai.agent.AgentOutcome;
 import io.github.agentic.ai.agent.AgentRequest;
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.Usage;
-import io.github.agentic.ai.graph.agent.interceptor.ModelCallHandler;
-import io.github.agentic.ai.graph.agent.interceptor.ModelInterceptor;
-import io.github.agentic.ai.graph.agent.interceptor.ModelRequest;
-import io.github.agentic.ai.graph.agent.interceptor.ModelResponse;
-import io.github.agentic.ai.graph.agent.interceptor.authorization.ToolAuthorizationPolicy;
-import io.github.agentic.ai.graph.execution.PrincipalReference;
-import io.github.agentic.ai.graph.execution.TenantReference;
-import io.github.agentic.ai.graph.execution.TrustedExecutionContext;
+import io.github.agentic.ai.agent.interceptor.ModelCallHandler;
+import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
+import io.github.agentic.ai.agent.interceptor.ModelRequest;
+import io.github.agentic.ai.agent.interceptor.ModelResponse;
+import io.github.agentic.ai.agent.interceptor.authorization.ToolAuthorizationPolicy;
+import io.github.agentic.ai.runtime.execution.PrincipalReference;
+import io.github.agentic.ai.runtime.execution.TenantReference;
+import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -54,9 +54,9 @@ public final class AgentApiConsumer {
 	}
 
 	public static void main(String[] args) throws Exception {
-		for (String unavailable : Set.of("io.github.agentic.ai.graph.StateGraph",
-				"io.github.agentic.ai.graph.OverAllState", "io.github.agentic.ai.graph.RunnableConfig",
-				"io.github.agentic.ai.graph.agent.Agent", "reactor.core.publisher.Flux",
+		for (String unavailable : Set.of("io.github.agentic.ai.workflow.graph.StateGraph",
+				"io.github.agentic.ai.workflow.graph.OverAllState", "io.github.agentic.ai.workflow.graph.RunnableConfig",
+				"io.github.agentic.ai.agent.orchestration.Agent", "reactor.core.publisher.Flux",
 				"org.springframework.context.ApplicationContext", "com.fasterxml.jackson.databind.ObjectMapper")) {
 			try {
 				Class.forName(unavailable, false, AgentApiConsumer.class.getClassLoader());

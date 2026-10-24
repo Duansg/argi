@@ -22,16 +22,16 @@ import io.github.agentic.ai.agent.studio.dto.AgentRunRequest;
 import io.github.agentic.ai.agent.studio.dto.messages.UserMessageDTO;
 import io.github.agentic.ai.agent.studio.dto.messages.ToolRequestConfirmMessageDTO;
 import io.github.agentic.ai.agent.studio.loader.AgentLoader;
-import io.github.agentic.ai.graph.CompileConfig;
-import io.github.agentic.ai.graph.KeyStrategy;
-import io.github.agentic.ai.graph.KeyStrategyFactoryBuilder;
-import io.github.agentic.ai.graph.RunnableConfig;
-import io.github.agentic.ai.graph.StateGraph;
-import io.github.agentic.ai.graph.action.InterruptionMetadata;
-import io.github.agentic.ai.graph.agent.Agent;
-import io.github.agentic.ai.graph.checkpoint.config.SaverConfig;
-import io.github.agentic.ai.graph.checkpoint.savers.MemorySaver;
-import io.github.agentic.ai.graph.exception.GraphStateException;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.KeyStrategy;
+import io.github.agentic.ai.workflow.graph.KeyStrategyFactoryBuilder;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.action.InterruptionMetadata;
+import io.github.agentic.ai.agent.orchestration.Agent;
+import io.github.agentic.ai.workflow.graph.checkpoint.config.SaverConfig;
+import io.github.agentic.ai.workflow.graph.checkpoint.savers.MemorySaver;
+import io.github.agentic.ai.workflow.graph.exception.GraphStateException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -41,7 +41,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import static io.github.agentic.ai.graph.action.AsyncNodeAction.node_async;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -196,7 +196,7 @@ class StudioStateDeltaTest {
 				.addStrategy("messages")
 				.build()).addNode("pause", node_async(state -> Map.of()))
 				.addNode("read",
-						io.github.agentic.ai.graph.action.AsyncNodeActionWithConfig.node_async((state, config) -> {
+						io.github.agentic.ai.workflow.graph.action.AsyncNodeActionWithConfig.node_async((state, config) -> {
 							observed = new HashMap<>(state.data());
 							observedFeedback = (InterruptionMetadata) config
 								.metadata(RunnableConfig.HUMAN_FEEDBACK_METADATA_KEY)

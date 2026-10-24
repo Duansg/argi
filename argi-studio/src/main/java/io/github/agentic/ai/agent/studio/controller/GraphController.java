@@ -18,8 +18,8 @@ package io.github.agentic.ai.agent.studio.controller;
 
 import io.github.agentic.ai.agent.studio.dto.GraphResponse;
 import io.github.agentic.ai.agent.studio.loader.GraphLoader;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.GraphRepresentation;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.GraphRepresentation;
 
 import java.util.List;
 

@@ -17,10 +17,10 @@ package io.github.agentic.ai.agent.studio.controller;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.Usage;
-import io.github.agentic.ai.graph.NodeOutput;
-import io.github.agentic.ai.graph.OverAllState;
-import io.github.agentic.ai.graph.streaming.OutputType;
-import io.github.agentic.ai.graph.streaming.StreamingOutput;
+import io.github.agentic.ai.workflow.graph.NodeOutput;
+import io.github.agentic.ai.workflow.graph.OverAllState;
+import io.github.agentic.ai.workflow.graph.streaming.OutputType;
+import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;

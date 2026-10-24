@@ -39,7 +39,7 @@ Java packages, and adapter behavior are unchanged by the directory move.
 
 Import `io.github.agentic-ai-java:argi-bom` at the ARGI version used by the
 application. For a standalone ReAct application, add `argi-agent-framework` and
-one of the four adapter artifacts. A graph-only application uses `argi-loop-core`
+one of the four adapter artifacts. A graph-only application uses `argi-workflow-graph-core`
 and, for built-in model nodes, `argi-starter-builtin-nodes` instead. The directory
 name `argi-api-base` is not a dependency coordinate.
 
@@ -60,7 +60,7 @@ import io.github.agentic.ai.api.chat.ChatClient;
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.ChatRequest;
 import io.github.agentic.ai.api.tool.ToolRegistry;
-import io.github.agentic.ai.graph.agent.ReactAgent;
+import io.github.agentic.ai.agent.orchestration.ReactAgent;
 
 // client is a framework adapter, or an application-provided neutral implementation.
 ChatMessage answer(ChatClient client, ToolRegistry tools, String question) throws Exception {

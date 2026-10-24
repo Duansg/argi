@@ -17,8 +17,8 @@ package io.github.agentic.ai.agent.studio.controller;
 
 import io.github.agentic.ai.agent.studio.loader.AgentLoader;
 import io.github.agentic.ai.agent.studio.loader.GraphLoader;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.agent.Agent;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.agent.orchestration.Agent;
 
 import org.junit.jupiter.api.Test;
 

@@ -24,12 +24,12 @@ import io.github.agentic.ai.agent.studio.dto.GraphRunResponse;
 import io.github.agentic.ai.agent.studio.dto.messages.MessageDTO;
 import io.github.agentic.ai.agent.studio.dto.messages.ToolRequestConfirmMessageDTO;
 import io.github.agentic.ai.agent.studio.loader.GraphLoader;
-import io.github.agentic.ai.graph.CompiledGraph;
-import io.github.agentic.ai.graph.NodeOutput;
-import io.github.agentic.ai.graph.RunnableConfig;
-import io.github.agentic.ai.graph.action.InterruptionMetadata;
-import io.github.agentic.ai.graph.streaming.OutputType;
-import io.github.agentic.ai.graph.streaming.StreamingOutput;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.NodeOutput;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.workflow.graph.action.InterruptionMetadata;
+import io.github.agentic.ai.workflow.graph.streaming.OutputType;
+import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
 
 import io.github.agentic.ai.api.chat.Usage;
 

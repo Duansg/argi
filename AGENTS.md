@@ -48,8 +48,16 @@ argi/
 │   ├── argi-adapter-langchain4j/
 │   ├── argi-adapter-google-adk/
 │   └── argi-adapter-agentscope/
-├── argi-agent-framework/        # Multi-agent framework (Sequential, Parallel, Routing, etc.)
-├── argi-graph-core/             # Runtime providing persistence, workflow orchestration, state mgmt
+├── argi-runtime/                # Runtime contracts and implementation
+│   ├── argi-runtime-api/
+│   └── argi-runtime-core/
+├── argi-agent/                  # Agent contracts and independent Agent engines
+│   ├── argi-agent-api/
+│   └── argi-agent-core/
+├── argi-orchestration/          # Graph, Workflow, and framework orchestration
+│   ├── argi-workflow-graph-core/
+│   ├── argi-workflow-core/
+│   └── argi-agent-framework/
 ├── argi-studio/                 # Embedded UI for debugging agents visually
 ├── argi-bom/                    # Bill of Materials for dependency management
 ├── argi-spring-boot-starter/           # Spring Boot Starters (directory group)
@@ -181,7 +189,7 @@ The project uses `make` for linting tasks:
 2.  **Spring Boot**: Uses Spring Boot 4.1.1. Spring AI 2.0.1 belongs only to its adapter and native test fixtures. The `jakarta.*` namespace applies throughout; there is no `javax.*` code.
 3.  **Dependencies**: Check `argi-bom` or parent pom for version management.
 4.  **Makefile**: Use the Makefile in the root for project maintenance tasks (linting, license checks).
-5.  **Structure**: Keep neutral contracts and framework adapters in `argi-api`, Spring Boot auto-configuration in `argi-spring-boot-starter`, and agent runtime features in `argi-agent-framework`.
+5.  **Structure**: Keep neutral model contracts and framework adapters in `argi-api`, runtime contracts in `argi-runtime`, independent Agent contracts and engines in `argi-agent`, orchestration engines in `argi-orchestration`, and Spring Boot auto-configuration in `argi-spring-boot-starter`.
 
 ## Important Links
 

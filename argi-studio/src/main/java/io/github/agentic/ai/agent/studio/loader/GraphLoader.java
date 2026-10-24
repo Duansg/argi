@@ -16,7 +16,7 @@
 
 package io.github.agentic.ai.agent.studio.loader;
 
-import io.github.agentic.ai.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
 
 import java.util.List;
 
@@ -28,9 +28,9 @@ import jakarta.annotation.Nonnull;
  * <p><strong>Default behavior:</strong> If you do not define a {@code GraphLoader} bean,
  * Studio automatically uses {@link ContextScanningGraphLoader}, which discovers all
  * {@link CompiledGraph} beans from the Spring {@link org.springframework.context.ApplicationContext}
- * and exposes them by their graph name (from {@link io.github.agentic.ai.graph.StateGraph#getName()}
+ * and exposes them by their graph name (from {@link io.github.agentic.ai.workflow.graph.StateGraph#getName()}
  * or bean name). You can therefore use Studio without implementing this interface: just define your
- * graphs as {@code @Bean}s (e.g. from {@link io.github.agentic.ai.graph.StateGraph#compile()})
+ * graphs as {@code @Bean}s (e.g. from {@link io.github.agentic.ai.workflow.graph.StateGraph#compile()})
  * and they will appear in Studio.
  *
  * <p><strong>Custom loader:</strong> To control which graphs are visible or how they are named,

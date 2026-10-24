@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package io.github.agentic.ai.graph;
+package io.github.agentic.ai.workflow.graph;
 
 import io.github.agentic.ai.agent.studio.loader.GraphLoader;
 import io.github.agentic.ai.agent.studio.loader.ContextScanningGraphLoader;

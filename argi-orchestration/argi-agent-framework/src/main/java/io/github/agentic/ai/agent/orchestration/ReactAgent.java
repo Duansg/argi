@@ -1,0 +1,1616 @@
+/*
+ * Copyright 2024-2026 the original author or authors.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package io.github.agentic.ai.agent.orchestration;
+
+import io.github.agentic.ai.api.chat.ChatMessage;
+import io.github.agentic.ai.api.chat.ChatRole;
+import io.github.agentic.ai.api.chat.ContextAuthorityKeys;
+import io.github.agentic.ai.api.chat.MessageProvenance;
+import io.github.agentic.ai.api.chat.Usage;
+import io.github.agentic.ai.api.chat.ChatClient;
+import io.github.agentic.ai.api.chat.ChatResponse;
+
+import io.github.agentic.ai.agent.AgentResult;
+import io.github.agentic.ai.workflow.graph.CompileConfig;
+import io.github.agentic.ai.workflow.graph.CompiledGraph;
+import io.github.agentic.ai.workflow.graph.GraphResponse;
+import io.github.agentic.ai.workflow.graph.KeyStrategy;
+import io.github.agentic.ai.workflow.graph.KeyStrategyFactory;
+import io.github.agentic.ai.workflow.graph.NodeOutput;
+import io.github.agentic.ai.workflow.graph.OverAllState;
+import io.github.agentic.ai.workflow.graph.RunnableConfig;
+import io.github.agentic.ai.workflow.graph.StateGraph;
+import io.github.agentic.ai.workflow.graph.SubGraphNode;
+import io.github.agentic.ai.workflow.graph.action.EdgeAction;
+import io.github.agentic.ai.workflow.graph.action.NodeActionWithConfig;
+import io.github.agentic.ai.agent.orchestration.exception.AgentException;
+import io.github.agentic.ai.agent.orchestration.factory.AgentBuilderFactory;
+import io.github.agentic.ai.agent.orchestration.factory.DefaultAgentBuilderFactory;
+import io.github.agentic.ai.agent.orchestration.hook.AbstractInterruptableModelHook;
+import io.github.agentic.ai.agent.orchestration.hook.AgentHook;
+import io.github.agentic.ai.agent.orchestration.hook.Hook;
+import io.github.agentic.ai.agent.orchestration.hook.HookPosition;
+import io.github.agentic.ai.agent.orchestration.hook.InstructionAgentHook;
+import io.github.agentic.ai.agent.orchestration.hook.JumpTo;
+import io.github.agentic.ai.agent.orchestration.hook.ModelHook;
+import io.github.agentic.ai.agent.orchestration.hook.ToolInjection;
+import io.github.agentic.ai.agent.orchestration.hook.messages.MessagesAgentHook;
+import io.github.agentic.ai.agent.orchestration.hook.messages.MessagesModelHook;
+import io.github.agentic.ai.agent.orchestration.hook.returndirect.ReturnDirectModelHook;
+import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
+import io.github.agentic.ai.agent.orchestration.interceptor.StreamingModelInterceptor;
+import io.github.agentic.ai.agent.orchestration.interceptor.ToolInterceptor;
+import io.github.agentic.ai.agent.orchestration.node.AgentLlmNode;
+import io.github.agentic.ai.agent.result.StructuredOutputFinalizer;
+import io.github.agentic.ai.agent.orchestration.node.AgentToolNode;
+import io.github.agentic.ai.workflow.graph.checkpoint.BaseCheckpointSaver;
+import io.github.agentic.ai.workflow.graph.checkpoint.Checkpoint;
+import io.github.agentic.ai.workflow.graph.checkpoint.CheckpointExecutionQueue;
+import io.github.agentic.ai.workflow.graph.checkpoint.LeasedCheckpointSaver;
+import io.github.agentic.ai.workflow.graph.checkpoint.VersionedCheckpointSaver;
+import io.github.agentic.ai.workflow.graph.checkpoint.VersionedCheckpointScope;
+import io.github.agentic.ai.workflow.graph.checkpoint.lease.ExecutionLeaseScope;
+import io.github.agentic.ai.workflow.graph.exception.GraphRunnerException;
+import io.github.agentic.ai.workflow.graph.exception.GraphStateException;
+import io.github.agentic.ai.workflow.graph.internal.node.Node;
+import io.github.agentic.ai.workflow.graph.internal.node.ResumableSubGraphAction;
+import io.github.agentic.ai.workflow.graph.serializer.AgentInstructionMessage;
+import io.github.agentic.ai.workflow.graph.streaming.OutputType;
+import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
+import io.github.agentic.ai.workflow.graph.serializer.StateSerializer;
+import io.github.agentic.ai.workflow.graph.serializer.plain_text.jackson.ArgiJacksonStateSerializer;
+import io.github.agentic.ai.workflow.graph.state.ReplaceAllWith;
+import io.github.agentic.ai.workflow.graph.state.strategy.AppendStrategy;
+import io.github.agentic.ai.workflow.graph.state.strategy.ReplaceStrategy;
+import io.github.agentic.ai.workflow.graph.utils.TypeRef;
+
+import org.jspecify.annotations.NonNull;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import org.springframework.util.StringUtils;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
+
+import static io.github.agentic.ai.workflow.graph.RunnableConfig.AGENT_MODEL_NAME;
+import static io.github.agentic.ai.workflow.graph.RunnableConfig.AGENT_TOOL_NAME;
+import static io.github.agentic.ai.workflow.graph.OverAllState.MARK_FOR_REMOVAL;
+import static io.github.agentic.ai.workflow.graph.StateGraph.START;
+import static io.github.agentic.ai.workflow.graph.action.AsyncEdgeAction.edge_async;
+import static io.github.agentic.ai.workflow.graph.action.AsyncNodeActionWithConfig.node_async;
+import static io.github.agentic.ai.agent.orchestration.hook.InterruptionHook.INTERRUPTION_FEEDBACK_KEY;
+import static io.github.agentic.ai.workflow.graph.internal.node.ResumableSubGraphAction.resumeSubGraphId;
+import static io.github.agentic.ai.workflow.graph.internal.node.ResumableSubGraphAction.subGraphId;
+import static java.lang.String.format;
+
+public class ReactAgent extends BaseAgent {
+
+	Logger logger = LoggerFactory.getLogger(ReactAgent.class);
+
+	private static final String FINAL_RESPONSE_METADATA_KEY = "argiFinalResponse";
+
+	private final ChatClient chatClient;
+
+	private volatile StructuredOutputFinalizer structuredOutputFinalizer;
+
+	private final ConcurrentMap<String, Map<String, Object>> threadIdStateMap;
+
+	private final AgentLlmNode llmNode;
+
+	private final AgentToolNode toolNode;
+
+	private List<? extends Hook> hooks;
+
+	private List<ModelInterceptor> modelInterceptors;
+
+	private List<ToolInterceptor> toolInterceptors;
+
+	private List<StreamingModelInterceptor> streamingInterceptors;
+
+	private String instruction;
+
+	private StateSerializer stateSerializer;
+
+	private final Boolean hasTools;
+
+	public ReactAgent(AgentLlmNode llmNode, AgentToolNode toolNode, CompileConfig compileConfig, Builder builder) {
+		super(builder.name, builder.description, builder.includeContents, builder.returnReasoningContents,
+				builder.outputKey, builder.outputKeyStrategy);
+		this.threadIdStateMap = new ConcurrentHashMap<>();
+
+		this.instruction = builder.instruction;
+		this.llmNode = llmNode;
+		this.toolNode = toolNode;
+		this.compileConfig = compileConfig;
+		this.hooks = builder.hooks;
+		this.modelInterceptors = builder.modelInterceptors;
+		this.toolInterceptors = builder.toolInterceptors;
+		this.streamingInterceptors = builder.streamingInterceptors;
+		this.includeContents = builder.includeContents;
+		this.inputSchema = builder.inputSchema;
+		this.inputType = builder.inputType;
+		this.outputSchema = builder.outputSchema;
+		this.outputType = builder.outputType;
+		this.chatClient = builder.chatClient;
+
+		// Set state serializer from builder, or use default
+		// Default to Jackson serializer for better compatibility and features
+		this.stateSerializer = Objects.requireNonNullElseGet(builder.stateSerializer,
+				() -> new ArgiJacksonStateSerializer(OverAllState::new));
+
+		// Set executor configuration from builder
+		this.executor = builder.executor;
+
+		// Set interceptors to nodes
+		// Collect interceptors from hooks and merge with current interceptors
+		List<ModelInterceptor> mergedModelInterceptors = collectAndMergeModelInterceptors();
+		List<ToolInterceptor> mergedToolInterceptors = collectAndMergeToolInterceptors();
+
+		if (mergedModelInterceptors != null && !mergedModelInterceptors.isEmpty()) {
+			this.llmNode.setModelInterceptors(mergedModelInterceptors);
+		}
+		if (mergedToolInterceptors != null && !mergedToolInterceptors.isEmpty()) {
+			this.toolNode.setToolInterceptors(mergedToolInterceptors);
+		}
+		if (this.streamingInterceptors != null && !this.streamingInterceptors.isEmpty()) {
+			this.llmNode.setStreamingInterceptors(this.streamingInterceptors);
+		}
+
+		// Interceptors may supply run-specific bindings even when no tools were
+		// configured.
+		hasTools = toolNode.hasTools() || (mergedModelInterceptors != null && !mergedModelInterceptors.isEmpty());
+	}
+
+	public static Builder builder() {
+		return new DefaultAgentBuilderFactory().builder();
+	}
+
+	public static Builder builder(AgentBuilderFactory agentBuilderFactory) {
+		return agentBuilderFactory.builder();
+	}
+
+	public ChatMessage call(String message) throws GraphRunnerException {
+		return doMessageInvoke(message, null);
+	}
+
+	public ChatMessage call(String message, RunnableConfig config) throws GraphRunnerException {
+		return doMessageInvoke(message, config);
+	}
+
+	public ChatMessage call(ChatMessage message) throws GraphRunnerException {
+		return doMessageInvoke(message, null);
+	}
+
+	public ChatMessage call(ChatMessage message, RunnableConfig config) throws GraphRunnerException {
+		return doMessageInvoke(message, config);
+	}
+
+	public ChatMessage call(List<ChatMessage> messages) throws GraphRunnerException {
+		return doMessageInvoke(messages, null);
+	}
+
+	public ChatMessage call(List<ChatMessage> messages, RunnableConfig config) throws GraphRunnerException {
+		return doMessageInvoke(messages, config);
+	}
+
+	/**
+	 * Calls the agent with the given inputs map and returns the assistant message.
+	 * <p>
+	 * When you need to pass additional parameters beyond {@code messages} and
+	 * {@code input}, use this overload.
+	 * <p>
+	 * Reserved keys: {@code messages} and {@code input} are used as question/input for
+	 * the agent. Other keys can be arbitrary and are passed as graph state, e.g. for
+	 * prompt placeholders or any other state values.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @return the assistant message response
+	 * @throws GraphRunnerException if the graph execution fails
+	 */
+	public ChatMessage call(Map<String, Object> inputs) throws GraphRunnerException {
+		return doMessageInvoke(inputs, null);
+	}
+
+	/**
+	 * Calls the agent with the given inputs map and runtime config, returns the assistant
+	 * message.
+	 * <p>
+	 * When you need to pass additional parameters beyond {@code messages} and
+	 * {@code input}, use this overload.
+	 * <p>
+	 * Reserved keys: {@code messages} and {@code input} are used as question/input for
+	 * the agent. Other keys can be arbitrary and are passed as graph state, e.g. for
+	 * prompt placeholders or any other state values.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the assistant message response
+	 * @throws GraphRunnerException if the graph execution fails
+	 */
+	public ChatMessage call(Map<String, Object> inputs, RunnableConfig config) throws GraphRunnerException {
+		return doMessageInvoke(inputs, config);
+	}
+
+	/**
+	 * Calls the agent and returns a structured {@link AgentResult} that parses and
+	 * validates the configured output schema instead of returning the raw assistant
+	 * message. The run contract is identical to {@link #call(String)}; only the delivery
+	 * boundary differs. Requires no new switch: a configured output schema signals the
+	 * validation intent, this entry signals the delivery intent. Terminal paths (normal
+	 * final message, returnDirect synthesis, hook {@code JumpTo.end}) all finalize
+	 * through the same boundary; an unfinished run is never reported as completed.
+	 * @param message the user input message
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(String message) {
+		return doResultInvoke(message, null);
+	}
+
+	/**
+	 * Calls the agent with a runtime configuration and returns a structured
+	 * {@link AgentResult}, mirroring {@link #call(String, RunnableConfig)}.
+	 * @param message the user input message
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(String message, RunnableConfig config) {
+		return doResultInvoke(message, config);
+	}
+
+	/**
+	 * Calls the agent with a {@link ChatMessage} input and returns a structured
+	 * {@link AgentResult}, mirroring {@link #call(ChatMessage)}.
+	 * @param message the input message
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(ChatMessage message) {
+		return doResultInvoke(message, null);
+	}
+
+	/**
+	 * Calls the agent with a {@link ChatMessage} input and runtime configuration and
+	 * returns a structured {@link AgentResult}, mirroring
+	 * {@link #call(ChatMessage, RunnableConfig)}.
+	 * @param message the input message
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(ChatMessage message, RunnableConfig config) {
+		return doResultInvoke(message, config);
+	}
+
+	/**
+	 * Calls the agent with a message list input and returns a structured
+	 * {@link AgentResult}, mirroring {@link #call(List)}.
+	 * @param messages the input messages
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(List<ChatMessage> messages) {
+		return doResultInvoke(messages, null);
+	}
+
+	/**
+	 * Calls the agent with a message list input and runtime configuration and returns a
+	 * structured {@link AgentResult}, mirroring {@link #call(List, RunnableConfig)}.
+	 * @param messages the input messages
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(List<ChatMessage> messages, RunnableConfig config) {
+		return doResultInvoke(messages, config);
+	}
+
+	/**
+	 * Calls the agent with an inputs map and returns a structured {@link AgentResult},
+	 * mirroring {@link #call(Map)}.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(Map<String, Object> inputs) {
+		return doResultInvoke(inputs, null);
+	}
+
+	/**
+	 * Calls the agent with an inputs map and runtime configuration and returns a
+	 * structured {@link AgentResult}, mirroring {@link #call(Map, RunnableConfig)}.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the structured delivery result; never {@code null}
+	 */
+	public AgentResult callResult(Map<String, Object> inputs, RunnableConfig config) {
+		return doResultInvoke(inputs, config);
+	}
+
+	/**
+	 * Streams the agent run as provisional {@link AgentResult} chunks followed by the
+	 * final validated delivery. Chunks with a {@code null} status are provisional and
+	 * explicitly unvalidated; the last element of the stream carries the delivery
+	 * outcome of the terminal message (one of the four terminal statuses), finalized
+	 * through the same boundary as {@link #callResult(String)}. A run that ends without
+	 * a terminal response is reported as INTERRUPTED, never as completed.
+	 * <p>
+	 * Delivery aggregation is isolated per subscription. Subscribing again can execute
+	 * the underlying agent again; results are not cached and tool side effects are not
+	 * made idempotent by this method.
+	 * </p>
+	 * @param message the user input message
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(String message) {
+		return doStreamResult(message, null);
+	}
+
+	/**
+	 * Streams the agent run with a runtime configuration, mirroring
+	 * {@link #streamResult(String)}.
+	 * @param message the user input message
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(String message, RunnableConfig config) {
+		return doStreamResult(message, config);
+	}
+
+	/**
+	 * Streams the agent run with a {@link ChatMessage} input, mirroring
+	 * {@link #streamResult(String)}.
+	 * @param message the input message
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(ChatMessage message) {
+		return doStreamResult(message, null);
+	}
+
+	/**
+	 * Streams the agent run with a {@link ChatMessage} input and runtime configuration,
+	 * mirroring {@link #streamResult(String)}.
+	 * @param message the input message
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(ChatMessage message, RunnableConfig config) {
+		return doStreamResult(message, config);
+	}
+
+	/**
+	 * Streams the agent run with a message list input, mirroring
+	 * {@link #streamResult(String)}.
+	 * @param messages the input messages
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(List<ChatMessage> messages) {
+		return doStreamResult(messages, null);
+	}
+
+	/**
+	 * Streams the agent run with a message list input and runtime configuration,
+	 * mirroring {@link #streamResult(String)}.
+	 * @param messages the input messages
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(List<ChatMessage> messages, RunnableConfig config) {
+		return doStreamResult(messages, config);
+	}
+
+	/**
+	 * Streams the agent run with an inputs map, mirroring {@link #streamResult(String)}.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(Map<String, Object> inputs) {
+		return doStreamResult(inputs, null);
+	}
+
+	/**
+	 * Streams the agent run with an inputs map and runtime configuration, mirroring
+	 * {@link #streamResult(String)}.
+	 * @param inputs the input map (reserved: messages, input; other keys as state)
+	 * @param config runtime configuration controlling execution behavior
+	 * @return the provisional chunk stream terminated by the validated result
+	 */
+	public Flux<AgentResult> streamResult(Map<String, Object> inputs, RunnableConfig config) {
+		return doStreamResult(inputs, config);
+	}
+
+	private Flux<AgentResult> doStreamResult(Object message, RunnableConfig config) {
+		return doStream(buildMessageInput(message), config).transform(this::finalizeStream);
+	}
+
+	private Flux<AgentResult> doStreamResult(Map<String, Object> inputs, RunnableConfig config) {
+		return doStream(normalizeMessageInput(inputs), config).transform(this::finalizeStream);
+	}
+
+	/**
+	 * Consumes the node-output stream: text-delta chunks are re-published as provisional
+	 * results (status {@code null}); the final aggregated response (marked by the
+	 * existing {@code argiFinalResponse} protocol convention) is buffered and finalized
+	 * once the stream completes, so unverified chunks are never reported as a delivery.
+	 * Aggregation is local to each subscription. Re-subscribing still subscribes to the
+	 * underlying execution again; it does not cache results or make side effects idempotent.
+	 */
+	private Flux<AgentResult> finalizeStream(Flux<NodeOutput> outputs) {
+		return Flux.defer(() -> {
+			AtomicReference<ChatResponse> finalResponse = new AtomicReference<>();
+			return outputs.concatMap(output -> {
+				if (!(output instanceof StreamingOutput<?> streamed)) {
+					return Flux.empty();
+				}
+				if (streamed.getOriginData() instanceof ChatResponse response
+						&& Boolean.TRUE.equals(response.metadata().get(FINAL_RESPONSE_METADATA_KEY))) {
+					finalResponse.set(response);
+					return Flux.empty();
+				}
+				if (streamed.getOutputType() == OutputType.AGENT_MODEL_STREAMING) {
+					return Flux.fromIterable(streamed.messages())
+						.map(message -> new AgentResult(message, null, Usage.unknown(), null, List.of()));
+				}
+				return Flux.empty();
+			}).concatWith(Flux.defer(() -> {
+				ChatResponse response = finalResponse.get();
+				if (response == null) {
+					return Flux.just(AgentResult.interrupted(Usage.unknown()));
+				}
+				ChatMessage terminal = response.messages().stream()
+					.filter(message -> message.role() == ChatRole.ASSISTANT)
+					.reduce((first, second) -> second)
+					.orElse(null);
+				if (terminal == null) {
+					return Flux.just(AgentResult.interrupted(response.usage()));
+				}
+				return Flux.just(deliver(terminal, response.usage()));
+			}));
+		});
+	}
+
+	private AgentResult doResultInvoke(Object message, RunnableConfig config) {
+		try {
+			return finalizeResult(doInvokeAndGetOutput(buildMessageInput(message), config));
+		}
+		catch (RuntimeException ex) {
+			return AgentResult.error(null, Usage.unknown(),
+					List.of(new AgentResult.OutputValidationIssue(AgentResult.ERROR_CODE_EXECUTION_FAILED, "",
+							ex.getMessage())));
+		}
+	}
+
+	private AgentResult doResultInvoke(Map<String, Object> inputs, RunnableConfig config) {
+		try {
+			return finalizeResult(doInvokeAndGetOutput(normalizeMessageInput(inputs), config));
+		}
+		catch (RuntimeException ex) {
+			return AgentResult.error(null, Usage.unknown(),
+					List.of(new AgentResult.OutputValidationIssue(AgentResult.ERROR_CODE_EXECUTION_FAILED, "",
+							ex.getMessage())));
+		}
+	}
+
+	private AgentResult finalizeResult(Optional<NodeOutput> output) {
+		// The runner strips the reserved usage key from the state and attaches it to the
+		// NodeOutput instead, so the usage comes from the final output record.
+		Usage usage = output.map(NodeOutput::tokenUsage).orElseGet(Usage::unknown);
+		ChatMessage terminal;
+		try {
+			terminal = extractAssistantMessage(output.map(NodeOutput::state));
+		}
+		catch (AgentException | IllegalStateException unfinished) {
+			// The run ended without a terminal message (for example after an
+			// interruption): report it as unfinished, never as completed.
+			return AgentResult.interrupted(usage);
+		}
+		return deliver(terminal, usage);
+	}
+
+	/** Maps a terminal message onto the delivery boundary shared by call and stream paths. */
+	private AgentResult deliver(ChatMessage terminal, Usage usage) {
+		if (Boolean.TRUE.equals(terminal.metadata().get(AgentLlmNode.MODEL_FAILURE_METADATA_KEY))) {
+			// throwOnModelError=false surfaces model failures as an assistant message
+			// that only the model node can mark.
+			return AgentResult.error(terminal, usage,
+					List.of(new AgentResult.OutputValidationIssue(AgentResult.ERROR_CODE_MODEL_FAILED, "",
+							terminal.text())));
+		}
+		return finalizer().finalizeOutput(terminal, outputSchema, usage);
+	}
+
+	/**
+	 * Lazily creates the delivery finalizer. The finalizer's class initialization loads
+	 * the JSON Schema validator classes, which are not guaranteed to be on every
+	 * consumer's classpath (the studio module, for one, resolves an older
+	 * json-schema-validator for its MCP client); agents that never finalize a
+	 * schema-constrained output must not trigger that load. When the agent has a chat
+	 * client, the finalizer gains the bounded repair capability.
+	 */
+	private StructuredOutputFinalizer finalizer() {
+		StructuredOutputFinalizer finalizer = this.structuredOutputFinalizer;
+		if (finalizer == null) {
+			finalizer = this.chatClient != null
+					? new StructuredOutputFinalizer(this.chatClient)
+					: new StructuredOutputFinalizer();
+			this.structuredOutputFinalizer = finalizer;
+		}
+		return finalizer;
+	}
+
+	public void interrupt(RunnableConfig config) {
+		updateAgentState(List.of(), config);
+	}
+
+	public void interrupt(List<ChatMessage> messages, RunnableConfig config) {
+		updateAgentState((messages), config);
+	}
+
+	public void interrupt(String userMessage, RunnableConfig config) {
+		interrupt(List.of(ChatMessage.user(userMessage)), config);
+	}
+
+	/**
+	 * Updates the agent thread state with interruption feedback. This method is
+	 * thread-safe and can be called concurrently with apply() in InterruptionHook.
+	 *
+	 * Thread-safety guarantees: - threadIdStateMap is a ConcurrentHashMap, ensuring
+	 * thread-safe access - computeIfAbsent ensures atomic creation of the inner map if it
+	 * doesn't exist - The inner map is always a ConcurrentHashMap, ensuring thread-safe
+	 * put() operations
+	 *
+	 * Concurrency behavior: - If called before apply() processes feedback: the new value
+	 * will be processed - If called after apply() removes feedback: the new value will be
+	 * set for next iteration - If called concurrently with apply(): the atomic operations
+	 * ensure no data loss
+	 */
+	public void updateAgentState(Object state, RunnableConfig config) {
+		String threadId = config.threadId()
+			.orElseThrow(() -> new IllegalArgumentException(
+					"threadId must be provided in RunnableConfig for interruption."));
+		// computeIfAbsent is atomic - ensures thread-safe creation of inner map
+		// The inner map is always ConcurrentHashMap, ensuring thread-safe put()
+		// operations
+		Map<String, Object> stateStatus = threadIdStateMap.computeIfAbsent(threadId, k -> new ConcurrentHashMap<>());
+		stateStatus.put(INTERRUPTION_FEEDBACK_KEY, state);
+	}
+
+	private ChatMessage doMessageInvoke(Object message, RunnableConfig config) throws GraphRunnerException {
+		Map<String, Object> inputs = buildMessageInput(message);
+		return extractAssistantMessage(doInvoke(inputs, config));
+	}
+
+	private ChatMessage doMessageInvoke(Map<String, Object> inputs, RunnableConfig config) throws GraphRunnerException {
+		return extractAssistantMessage(doInvoke(normalizeMessageInput(inputs), config));
+	}
+
+	private ChatMessage extractAssistantMessage(Optional<OverAllState> state) {
+		if (StringUtils.hasLength(outputKey)) {
+			return state.flatMap(s -> s.value(outputKey))
+				.map(ReactAgent::neutralAssistant)
+				.orElseThrow(() -> new IllegalStateException("Output key " + outputKey + " not found in agent state"));
+		}
+
+		// Add a validation instance when performing message conversion to
+		// avoid potential type conversion exceptions.
+		return state.flatMap(s -> s.value("messages"))
+			.stream()
+			.flatMap(messageList -> ((List<?>) messageList).stream()
+				.filter(msg -> msg instanceof ChatMessage && ((ChatMessage) msg).role() == ChatRole.ASSISTANT
+						|| msg instanceof ChatMessage chat
+								&& chat.role() == io.github.agentic.ai.api.chat.ChatRole.ASSISTANT)
+				.map(ReactAgent::neutralAssistant))
+			.reduce((first, second) -> second)
+			.orElseThrow(() -> new AgentException("No assistant ChatMessage found in 'messages' state"));
+	}
+
+	private static ChatMessage neutralAssistant(Object value) {
+		ChatMessage message;
+		if (value instanceof ChatMessage nativeMessage && nativeMessage.role() == ChatRole.ASSISTANT) {
+			message = (List.of(nativeMessage)).get(0);
+		}
+		else if (value instanceof ChatMessage chatMessage) {
+			message = chatMessage;
+		}
+		else {
+			throw new AgentException("Agent output must be an assistant ChatMessage");
+		}
+		if (message.role() != io.github.agentic.ai.api.chat.ChatRole.ASSISTANT) {
+			throw new AgentException("Agent output must have the assistant role");
+		}
+		return message;
+	}
+
+	public StateGraph getStateGraph() {
+		return getGraph();
+	}
+
+	public CompiledGraph getCompiledGraph() {
+		return compiledGraph;
+	}
+
+	@Override
+	protected Flux<NodeOutput> doStream(Map<String, Object> input, RunnableConfig runnableConfig) {
+		CompiledGraph compiledGraph = getAndCompileGraph();
+		RunnableConfig config = buildStreamConfig(runnableConfig);
+		Optional<BaseCheckpointSaver> saver = compiledGraph.compileConfig.checkpointSaver();
+		// Capture the pre-turn snapshot after this subscription acquires its execution
+		// slot:
+		// the graph itself only executes on subscribe, so the rewind base must be
+		// read in the same per-subscription scope. A snapshot taken when the Flux
+		// was created would let a cancellation roll the thread back over any state
+		// committed between assembly and subscription, and every re-subscription of
+		// a cold Flux would reuse that same stale read.
+		Supplier<Flux<NodeOutput>> execution = () -> {
+			if (saver.orElse(null) instanceof LeasedCheckpointSaver leasedSaver) {
+				return ExecutionLeaseScope.withLease(leasedSaver, config,
+						lease -> VersionedCheckpointScope.withScope(leasedSaver, config,
+								compiledGraph.stateGraph.getStateSerializer(),
+								scope -> compiledGraph.stream(input, config)
+									.doFinally(signal -> rewindOnCancel(signal, config, scope))));
+			}
+			if (saver.orElse(null) instanceof VersionedCheckpointSaver versionedSaver) {
+				return VersionedCheckpointScope.withScope(versionedSaver, config,
+						compiledGraph.stateGraph.getStateSerializer(), scope -> compiledGraph.stream(input, config)
+							.doFinally(signal -> rewindOnCancel(signal, config, scope)));
+			}
+			Optional<Checkpoint> preTurnCheckpoint = saver.flatMap(s -> {
+				try {
+					return s.get(config);
+				}
+				catch (Exception e) {
+					return Optional.empty();
+				}
+			});
+			return compiledGraph.stream(input, config).doFinally(signal -> {
+				// Rewind in doFinally rather than doOnCancel: cancellation is
+				// cooperative, so the cancelled run may still persist one more
+				// checkpoint while unwinding. doFinally runs after the upstream
+				// has fully terminated, making the rewind the last writer for
+				// this execution instead of a write that a late checkpoint put
+				// can overwrite.
+				if (signal == SignalType.CANCEL) {
+					rewindToPreTurnCheckpoint(saver, config, preTurnCheckpoint);
+				}
+			});
+		};
+		return saver.map(checkpointSaver -> CheckpointExecutionQueue.serialize(checkpointSaver, config, execution))
+			.orElseGet(() -> Flux.defer(execution));
+	}
+
+	private void rewindOnCancel(SignalType signal, RunnableConfig config, VersionedCheckpointScope scope) {
+		if (signal == SignalType.CANCEL) {
+			rewindVersionedScope(config, scope);
+		}
+	}
+
+	private void rewindVersionedScope(RunnableConfig config, VersionedCheckpointScope scope) {
+		try {
+			scope.rewind(config);
+		}
+		catch (Exception e) {
+			// Versioned cancellation rewind is best-effort. The scope itself preserves
+			// the
+			// external-writer-wins rule for conflicts; other rewind failures must not
+			// mask
+			// cancellation.
+		}
+	}
+
+	/**
+	 * A cancelled streaming turn must not leave a half-persisted multi-step fragment (a
+	 * dangling assistant tool_call or an orphan tool response) in the checkpoint: the
+	 * next turn would load an invalid message sequence that LLM APIs reject. Rewind the
+	 * thread to the checkpoint taken before this turn started, so a cancelled turn is
+	 * treated as if it never happened (issue #25).
+	 */
+	private void rewindToPreTurnCheckpoint(Optional<BaseCheckpointSaver> saver, RunnableConfig config,
+			Optional<Checkpoint> preTurnCheckpoint) {
+		if (saver.isEmpty()) {
+			return;
+		}
+		try {
+			// No pre-turn checkpoint means this was the first turn on the thread: rewind
+			// to an
+			// empty state so the cancelled turn leaves nothing behind.
+			Checkpoint rewindCheckpoint = preTurnCheckpoint.map(Checkpoint::copyOf)
+				.orElseGet(() -> Checkpoint.builder()
+					.nodeId(StateGraph.START)
+					.nextNodeId(StateGraph.END)
+					.state(new HashMap<>())
+					.build());
+			saver.get().put(config, rewindCheckpoint);
+		}
+		catch (Exception e) {
+			// Rewinding is best-effort: a failure here must not mask the cancellation
+			// itself.
+		}
+	}
+
+	@Override
+	public Node asNode(boolean includeContents, boolean returnReasoningContents) {
+		if (this.compiledGraph == null) {
+			this.compiledGraph = getAndCompileGraph();
+		}
+		return new AgentSubGraphNode(this.name, includeContents, returnReasoningContents, this.compiledGraph,
+				this.instruction);
+	}
+
+	@Override
+	protected StateGraph initGraph() throws GraphStateException {
+
+		if (hooks == null) {
+			hooks = new ArrayList<>();
+		}
+
+		// Always inject default InstructionAgentHook so instruction is handled in
+		// beforeAgent
+		List<Hook> effectiveHooks = new ArrayList<>();
+		effectiveHooks.add(InstructionAgentHook.create());
+		if (shouldInjectReturnDirectHook(hooks)) {
+			effectiveHooks.add(new ReturnDirectModelHook());
+		}
+		effectiveHooks.addAll(hooks);
+
+		// Validate hook uniqueness
+		Set<String> hookNames = new HashSet<>();
+		for (Hook hook : effectiveHooks) {
+			if (!hookNames.add(Hook.getFullHookName(hook))) {
+				throw new IllegalArgumentException("Duplicate hook instances found");
+			}
+
+			// set agent name to every hook node.
+			hook.setAgentName(this.name);
+			hook.setAgent(this);
+		}
+
+		// Create graph with state serializer
+		StateGraph graph = new StateGraph(name, buildMessagesKeyStrategyFactory(effectiveHooks), stateSerializer);
+
+		graph.addNode(AGENT_MODEL_NAME, node_async(this.llmNode));
+		if (hasTools) {
+			graph.addNode(AGENT_TOOL_NAME, node_async(this.toolNode));
+		}
+
+		// some hooks may need tools so they can do some initialization/cleanup on
+		// start/end of agent loop
+		setupToolsForHooks(effectiveHooks, toolNode);
+
+		// Categorize hooks by position
+		List<Hook> beforeAgentHooks = filterHooksByPosition(effectiveHooks, HookPosition.BEFORE_AGENT);
+		List<Hook> afterAgentHooks = filterHooksByPosition(effectiveHooks, HookPosition.AFTER_AGENT);
+		List<Hook> beforeModelHooks = filterHooksByPosition(effectiveHooks, HookPosition.BEFORE_MODEL);
+		List<Hook> afterModelHooks = filterHooksByPosition(effectiveHooks, HookPosition.AFTER_MODEL);
+
+		// Add hook nodes for beforeAgent hooks
+		for (Hook hook : beforeAgentHooks) {
+			if (hook instanceof AgentHook agentHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".before", agentHook::beforeAgent);
+			}
+			else if (hook instanceof MessagesAgentHook messagesAgentHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".before",
+						MessagesAgentHook.beforeAgentAction(messagesAgentHook));
+			}
+		}
+
+		// Add hook nodes for afterAgent hooks
+		for (Hook hook : afterAgentHooks) {
+			if (hook instanceof AgentHook agentHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".after", agentHook::afterAgent);
+			}
+			else if (hook instanceof MessagesAgentHook messagesAgentHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".after",
+						MessagesAgentHook.afterAgentAction(messagesAgentHook));
+			}
+		}
+
+		// Add hook nodes for beforeModel hooks
+		for (Hook hook : beforeModelHooks) {
+			if (hook instanceof AbstractInterruptableModelHook interruptableModelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".beforeModel", interruptableModelHook);
+			}
+			else if (hook instanceof ModelHook modelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".beforeModel", modelHook::beforeModel);
+			}
+			else if (hook instanceof MessagesModelHook messagesModelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".beforeModel",
+						MessagesModelHook.beforeModelAction(messagesModelHook));
+			}
+		}
+
+		// Add hook nodes for afterModel hooks
+		for (Hook hook : afterModelHooks) {
+			if (hook instanceof AbstractInterruptableModelHook interruptableModelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".afterModel", interruptableModelHook);
+			}
+			else if (hook instanceof ModelHook modelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".afterModel", modelHook::afterModel);
+			}
+			else if (hook instanceof MessagesModelHook messagesModelHook) {
+				graph.addNode(Hook.getFullHookName(hook) + ".afterModel",
+						MessagesModelHook.afterModelAction(messagesModelHook));
+			}
+		}
+
+		// Determine node flow
+		String entryNode = determineEntryNode(beforeAgentHooks, beforeModelHooks);
+		String loopEntryNode = determineLoopEntryNode(beforeModelHooks);
+		String loopExitNode = determineLoopExitNode(afterModelHooks);
+		String exitNode = determineExitNode(afterAgentHooks);
+
+		// Set up edges
+		graph.addEdge(START, entryNode);
+		setupHookEdges(graph, beforeAgentHooks, afterAgentHooks, beforeModelHooks, afterModelHooks, entryNode,
+				loopEntryNode, loopExitNode, exitNode, this);
+		return graph;
+	}
+
+	private boolean shouldInjectReturnDirectHook(List<? extends Hook> hooks) {
+		String returnDirectHookName = new ReturnDirectModelHook().getName();
+		return hooks.stream()
+			.noneMatch(hook -> hook instanceof ReturnDirectModelHook
+					|| Objects.equals(hook.getName(), returnDirectHookName));
+	}
+
+	/**
+	 * Setup and inject tools for hooks that implement ToolInjection interface. Only the
+	 * tool matching the hook's required tool name or type will be injected.
+	 * @param hooks the list of hooks
+	 * @param toolNode the agent tool node containing available tools
+	 */
+	private void setupToolsForHooks(List<? extends Hook> hooks, AgentToolNode toolNode) {
+		if (hooks == null || hooks.isEmpty() || toolNode == null) {
+			return;
+		}
+
+		List<io.github.agentic.ai.api.tool.Tool> availableTools = toolNode.getTools();
+		if (availableTools == null || availableTools.isEmpty()) {
+			return;
+		}
+
+		for (Hook hook : hooks) {
+			if (hook instanceof ToolInjection toolInjection) {
+				io.github.agentic.ai.api.tool.Tool toolToInject = findToolForHook(toolInjection, availableTools);
+				if (toolToInject != null) {
+					toolInjection.injectTool(toolToInject);
+				}
+			}
+		}
+	}
+
+	/**
+	 * Find the matching tool based on hook's requirements. Matching priority: 1) by name,
+	 * 2) by type, 3) first available tool
+	 * @param toolInjection the hook that needs a tool
+	 * @param availableTools all available neutral tool bindings
+	 * @return the matching tool, or null if no match found
+	 */
+	private io.github.agentic.ai.api.tool.Tool findToolForHook(ToolInjection toolInjection,
+			List<io.github.agentic.ai.api.tool.Tool> availableTools) {
+		String requiredToolName = toolInjection.getRequiredToolName();
+		Class<? extends io.github.agentic.ai.api.tool.Tool> requiredToolType = toolInjection.getRequiredToolType();
+
+		// Priority 1: Match by tool name
+		if (requiredToolName != null) {
+			for (io.github.agentic.ai.api.tool.Tool tool : availableTools) {
+				String toolName = tool.definition().name();
+				if (requiredToolName.equals(toolName)) {
+					return tool;
+				}
+			}
+		}
+
+		// Priority 2: Match by tool type
+		if (requiredToolType != null) {
+			for (io.github.agentic.ai.api.tool.Tool tool : availableTools) {
+				if (requiredToolType.isInstance(tool)) {
+					return tool;
+				}
+			}
+		}
+
+		// Priority 3: If no specific requirement, return the first available tool
+		if (requiredToolName == null && requiredToolType == null && !availableTools.isEmpty()) {
+			return availableTools.get(0);
+		}
+
+		return null;
+	}
+
+	/**
+	 * Filter hooks by their position based on @HookPositions annotation. A hook will be
+	 * included if its getHookPositions() contains the specified position. If a hook
+	 * implements Prioritized interface, it will be sorted by its order. Hooks that don't
+	 * implement Prioritized will maintain their original order.
+	 * @param hooks the list of hooks to filter
+	 * @param position the position to filter by
+	 * @return list of hooks that should execute at the specified position
+	 */
+	private static List<Hook> filterHooksByPosition(List<? extends Hook> hooks, HookPosition position) {
+		List<Hook> filtered = hooks.stream().filter(hook -> {
+			HookPosition[] positions = hook.getHookPositions();
+			return Arrays.asList(positions).contains(position);
+		}).collect(Collectors.toList());
+
+		// Separate hooks that implement Prioritized from those that don't
+		List<Hook> prioritizedHooks = new ArrayList<>();
+		List<Hook> nonPrioritizedHooks = new ArrayList<>();
+
+		for (Hook hook : filtered) {
+			if (hook instanceof Prioritized) {
+				prioritizedHooks.add(hook);
+			}
+			else {
+				nonPrioritizedHooks.add(hook);
+			}
+		}
+
+		// Sort prioritized hooks by their order
+		prioritizedHooks.sort(Comparator.comparingInt(h -> ((Prioritized) h).getOrder()));
+
+		// Combine: prioritized hooks first (sorted), then non-prioritized hooks (original
+		// order)
+		List<Hook> result = new ArrayList<>(prioritizedHooks);
+		result.addAll(nonPrioritizedHooks);
+
+		return result;
+	}
+
+	private static String determineEntryNode(List<Hook> agentHooks, List<Hook> modelHooks) {
+
+		if (!agentHooks.isEmpty()) {
+			return Hook.getFullHookName(agentHooks.get(0)) + ".before";
+		}
+		else if (!modelHooks.isEmpty()) {
+			return Hook.getFullHookName(modelHooks.get(0)) + ".beforeModel";
+		}
+		else {
+			return AGENT_MODEL_NAME;
+		}
+	}
+
+	private static String determineLoopEntryNode(List<Hook> modelHooks) {
+
+		if (!modelHooks.isEmpty()) {
+			return Hook.getFullHookName(modelHooks.get(0)) + ".beforeModel";
+		}
+		else {
+			return AGENT_MODEL_NAME;
+		}
+	}
+
+	private static String determineLoopExitNode(List<Hook> modelHooks) {
+
+		if (!modelHooks.isEmpty()) {
+			return Hook.getFullHookName(modelHooks.get(0)) + ".afterModel";
+		}
+		else {
+			return AGENT_MODEL_NAME;
+		}
+	}
+
+	private static String determineExitNode(List<Hook> agentHooks) {
+
+		if (!agentHooks.isEmpty()) {
+			return Hook.getFullHookName(agentHooks.get(agentHooks.size() - 1)) + ".after";
+		}
+		else {
+			return StateGraph.END;
+		}
+	}
+
+	private static void setupHookEdges(StateGraph graph, List<Hook> beforeAgentHooks, List<Hook> afterAgentHooks,
+			List<Hook> beforeModelHooks, List<Hook> afterModelHooks, String entryNode, String loopEntryNode,
+			String loopExitNode, String exitNode, ReactAgent agentInstance) throws GraphStateException {
+
+		// Chain before_agent hook
+		chainHook(graph, beforeAgentHooks, ".before", loopEntryNode, loopEntryNode, exitNode);
+
+		// Chain before_model hook
+		chainHook(graph, beforeModelHooks, ".beforeModel", AGENT_MODEL_NAME, loopEntryNode, exitNode);
+
+		// Chain after_model hook (reverse order)
+		if (!afterModelHooks.isEmpty()) {
+			chainModelHookReverse(graph, afterModelHooks, ".afterModel", AGENT_MODEL_NAME, loopEntryNode, exitNode);
+		}
+
+		// Chain after_agent hook (reverse order)
+		if (!afterAgentHooks.isEmpty()) {
+			chainAgentHookReverse(graph, afterAgentHooks, ".after", exitNode, loopEntryNode, exitNode);
+		}
+
+		// Add tool routing if tools exist
+		if (agentInstance.hasTools) {
+			setupToolRouting(graph, loopExitNode, loopEntryNode, exitNode, agentInstance);
+		}
+		else if (!loopExitNode.equals(AGENT_MODEL_NAME)) {
+			// No tools but have after_model - connect to exit
+			addHookEdge(graph, loopExitNode, exitNode, loopEntryNode, exitNode,
+					afterModelHooks.get(afterModelHooks.size() - 1).canJumpTo());
+		}
+		else {
+			// No tools and no after_model - direct to exit
+			graph.addEdge(loopExitNode, exitNode);
+		}
+	}
+
+	private static void chainModelHookReverse(StateGraph graph, List<Hook> hooks, String nameSuffix, String defaultNext,
+			String modelDestination, String endDestination) throws GraphStateException {
+
+		graph.addEdge(defaultNext, Hook.getFullHookName(hooks.get(hooks.size() - 1)) + nameSuffix);
+
+		for (int i = hooks.size() - 1; i > 0; i--) {
+			Hook m1 = hooks.get(i);
+			Hook m2 = hooks.get(i - 1);
+			addHookEdge(graph, Hook.getFullHookName(m1) + nameSuffix, Hook.getFullHookName(m2) + nameSuffix,
+					modelDestination, endDestination, m1.canJumpTo());
+		}
+	}
+
+	private static void chainAgentHookReverse(StateGraph graph, List<Hook> hooks, String nameSuffix, String defaultNext,
+			String modelDestination, String endDestination) throws GraphStateException {
+		if (!hooks.isEmpty()) {
+			Hook first = hooks.get(0);
+			addHookEdge(graph, Hook.getFullHookName(first) + nameSuffix, StateGraph.END, modelDestination,
+					endDestination, first.canJumpTo());
+		}
+
+		for (int i = hooks.size() - 1; i > 0; i--) {
+			Hook m1 = hooks.get(i);
+			Hook m2 = hooks.get(i - 1);
+			addHookEdge(graph, Hook.getFullHookName(m1) + nameSuffix, Hook.getFullHookName(m2) + nameSuffix,
+					modelDestination, endDestination, m1.canJumpTo());
+		}
+	}
+
+	private static void chainHook(StateGraph graph, List<Hook> hooks, String nameSuffix, String defaultNext,
+			String modelDestination, String endDestination) throws GraphStateException {
+
+		for (int i = 0; i < hooks.size() - 1; i++) {
+			Hook m1 = hooks.get(i);
+			Hook m2 = hooks.get(i + 1);
+			addHookEdge(graph, Hook.getFullHookName(m1) + nameSuffix, Hook.getFullHookName(m2) + nameSuffix,
+					modelDestination, endDestination, m1.canJumpTo());
+		}
+
+		if (!hooks.isEmpty()) {
+			Hook last = hooks.get(hooks.size() - 1);
+			addHookEdge(graph, Hook.getFullHookName(last) + nameSuffix, defaultNext, modelDestination, endDestination,
+					last.canJumpTo());
+		}
+	}
+
+	private static void addHookEdge(StateGraph graph, String name, String defaultDestination, String modelDestination,
+			String endDestination, List<JumpTo> canJumpTo) throws GraphStateException {
+
+		if (canJumpTo != null && !canJumpTo.isEmpty()) {
+			EdgeAction router = state -> {
+				JumpTo jumpTo = readAndClearJumpTo(state);
+				return resolveJump(jumpTo, modelDestination, endDestination, defaultDestination);
+			};
+
+			Map<String, String> destinations = new HashMap<>();
+			destinations.put(defaultDestination, defaultDestination);
+
+			if (canJumpTo.contains(JumpTo.end)) {
+				destinations.put(endDestination, endDestination);
+			}
+			if (canJumpTo.contains(JumpTo.tool)) {
+				destinations.put(AGENT_TOOL_NAME, AGENT_TOOL_NAME);
+			}
+			if (canJumpTo.contains(JumpTo.model) && !name.equals(modelDestination)) {
+				destinations.put(modelDestination, modelDestination);
+			}
+
+			graph.addConditionalEdges(name, edge_async(router), destinations);
+		}
+		else {
+			graph.addEdge(name, defaultDestination);
+		}
+	}
+
+	private static void setupToolRouting(StateGraph graph, String loopExitNode, String loopEntryNode, String exitNode,
+			ReactAgent agentInstance) throws GraphStateException {
+
+		// Model to tools routing
+		graph.addConditionalEdges(loopExitNode, edge_async(agentInstance.makeModelToTools(loopEntryNode, exitNode)),
+				Map.of(AGENT_TOOL_NAME, AGENT_TOOL_NAME, exitNode, exitNode, loopEntryNode, loopEntryNode));
+
+		// Tools to model routing
+		graph.addConditionalEdges(AGENT_TOOL_NAME,
+				edge_async(agentInstance.makeToolsToModelEdge(loopEntryNode, exitNode)),
+				Map.of(loopEntryNode, loopEntryNode, exitNode, exitNode));
+	}
+
+	private static JumpTo readAndClearJumpTo(OverAllState state) {
+		Object jumpToValue = state.value("jump_to").orElse(null);
+		if (jumpToValue != null) {
+			state.updateState(Map.of("jump_to", MARK_FOR_REMOVAL));
+		}
+		if (jumpToValue instanceof JumpTo jumpTo) {
+			return jumpTo;
+		}
+		if (jumpToValue instanceof String jumpTo) {
+			return JumpTo.fromStringOrNull(jumpTo);
+		}
+		return null;
+	}
+
+	private static String resolveJump(JumpTo jumpTo, String modelDestination, String endDestination,
+			String defaultDestination) {
+		if (jumpTo == null) {
+			return defaultDestination;
+		}
+
+		return switch (jumpTo) {
+			case model -> modelDestination;
+			case end -> endDestination;
+			case tool -> AGENT_TOOL_NAME;
+		};
+	}
+
+	private KeyStrategyFactory buildMessagesKeyStrategyFactory(List<? extends Hook> hooks) {
+		return () -> {
+			HashMap<String, KeyStrategy> keyStrategyHashMap = new HashMap<>();
+			if (outputKey != null && !outputKey.isEmpty()) {
+				keyStrategyHashMap.put(outputKey,
+						outputKeyStrategy == null ? new ReplaceStrategy() : outputKeyStrategy);
+			}
+			keyStrategyHashMap.put("messages", new AppendStrategy());
+
+			// Iterate through hooks and collect their key strategies
+			if (hooks != null) {
+				for (Hook hook : hooks) {
+					Map<String, KeyStrategy> hookStrategies = hook.getKeyStrategys();
+					if (hookStrategies != null && !hookStrategies.isEmpty()) {
+						keyStrategyHashMap.putAll(hookStrategies);
+					}
+				}
+			}
+
+			return keyStrategyHashMap;
+		};
+	}
+
+	private EdgeAction makeModelToTools(String modelDestination, String endDestination) {
+		return state -> {
+			// Priority 1: Check for jump_to instruction from hooks
+			// This allows afterModel hooks to control workflow execution
+			JumpTo jumpTo = readAndClearJumpTo(state);
+
+			// If a valid jump_to instruction exists, execute it immediately
+			if (jumpTo != null) {
+				return switch (jumpTo) {
+					case model -> modelDestination;
+					case end -> endDestination;
+					case tool -> AGENT_TOOL_NAME;
+				};
+			}
+
+			// Priority 2: Check message content for tool calls
+			List<ChatMessage> messages = (List<ChatMessage>) state.value("messages").orElse(List.of());
+			if (messages.isEmpty()) {
+				logger.warn("No messages found in state when routing from model to tools");
+				return endDestination;
+			}
+			ChatMessage lastMessage = messages.get(messages.size() - 1);
+
+			// 1. Check the last message type
+			if (lastMessage.role() == ChatRole.ASSISTANT) {
+				ChatMessage assistantMessage = lastMessage;
+				// 2. If last message is ChatMessage
+				if (assistantMessage.hasToolCalls()) {
+					return AGENT_TOOL_NAME;
+				}
+				else {
+					return endDestination;
+				}
+			}
+			if (lastMessage.role() == ChatRole.TOOL) {
+				Set<String> executed = new HashSet<>();
+				int index = messages.size() - 1;
+				while (index >= 0 && messages.get(index).role() == ChatRole.TOOL) {
+					executed.add(messages.get(index--).toolCallId());
+				}
+				if (index >= 0 && messages.get(index).role() == ChatRole.ASSISTANT) {
+					Set<String> requested = messages.get(index)
+						.toolCalls()
+						.stream()
+						.map(io.github.agentic.ai.api.chat.ToolCall::id)
+						.collect(java.util.stream.Collectors.toSet());
+					return executed.containsAll(requested) ? modelDestination : AGENT_TOOL_NAME;
+				}
+			}
+
+			return endDestination;
+		};
+	}
+
+	private EdgeAction makeToolsToModelEdge(String modelDestination, String endDestination) {
+		return state -> {
+			// Tool execution completed successfully, route back to the loop entry. The
+			// default ReturnDirectModelHook handles direct tool responses before the next
+			// model call.
+			return modelDestination;
+		};
+	}
+
+	/**
+	 * Collects model interceptors from hooks (ModelHook and AgentHook) and merges them
+	 * with the current model interceptors.
+	 * <p>
+	 * If interceptors with the same name exist, the ones from ReactAgent configuration
+	 * take priority over those from hooks.
+	 * @return merged list of model interceptors, or null if no interceptors exist
+	 */
+	private List<ModelInterceptor> collectAndMergeModelInterceptors() {
+		List<ModelInterceptor> result = new ArrayList<>();
+		Set<String> addedNames = new HashSet<>();
+
+		// Add current model interceptors if they exist (higher priority)
+		if (this.modelInterceptors != null && !this.modelInterceptors.isEmpty()) {
+			for (ModelInterceptor interceptor : this.modelInterceptors) {
+				result.add(interceptor);
+				addedNames.add(interceptor.getName());
+			}
+		}
+
+		// Collect interceptors from hooks (skip if name already exists)
+		if (this.hooks != null && !this.hooks.isEmpty()) {
+			for (Hook hook : this.hooks) {
+				List<ModelInterceptor> hookInterceptors = hook.getModelInterceptors();
+				if (hookInterceptors != null && !hookInterceptors.isEmpty()) {
+					for (ModelInterceptor interceptor : hookInterceptors) {
+						String name = interceptor.getName();
+						if (!addedNames.contains(name)) {
+							result.add(interceptor);
+							addedNames.add(name);
+						}
+						else {
+							logger.info(
+									"Skipping model interceptor '{}' from hook '{}' because an interceptor with the same name already exists in ReactAgent configuration",
+									name, hook.getName());
+						}
+					}
+				}
+			}
+		}
+
+		return result.isEmpty() ? null : result;
+	}
+
+	/**
+	 * Collects tool interceptors from hooks (ModelHook and AgentHook) and merges them
+	 * with the current tool interceptors.
+	 * <p>
+	 * If interceptors with the same name exist, the ones from ReactAgent configuration
+	 * take priority over those from hooks.
+	 * @return merged list of tool interceptors, or null if no interceptors exist
+	 */
+	private List<ToolInterceptor> collectAndMergeToolInterceptors() {
+		List<ToolInterceptor> result = new ArrayList<>();
+		Set<String> addedNames = new HashSet<>();
+
+		// Add current tool interceptors if they exist (higher priority)
+		if (this.toolInterceptors != null && !this.toolInterceptors.isEmpty()) {
+			for (ToolInterceptor interceptor : this.toolInterceptors) {
+				result.add(interceptor);
+				addedNames.add(interceptor.getName());
+			}
+		}
+
+		// Collect interceptors from hooks (skip if name already exists)
+		if (this.hooks != null && !this.hooks.isEmpty()) {
+			for (Hook hook : this.hooks) {
+				List<ToolInterceptor> hookInterceptors = hook.getToolInterceptors();
+				if (hookInterceptors != null && !hookInterceptors.isEmpty()) {
+					for (ToolInterceptor interceptor : hookInterceptors) {
+						String name = interceptor.getName();
+						if (!addedNames.contains(name)) {
+							result.add(interceptor);
+							addedNames.add(name);
+						}
+						else {
+							logger.info(
+									"Skipping tool interceptor '{}' from hook '{}' because an interceptor with the same name already exists in ReactAgent configuration",
+									name, hook.getName());
+						}
+					}
+				}
+			}
+		}
+
+		return result.isEmpty() ? null : result;
+	}
+
+	public String instruction() {
+		return instruction;
+	}
+
+	public void setInstruction(String instruction) {
+		this.instruction = instruction;
+		llmNode.setInstruction(instruction);
+	}
+
+	public void setSystemPrompt(String systemPrompt) {
+		llmNode.setSystemPrompt(systemPrompt);
+	}
+
+	public Map<String, Object> getThreadState(String threadId) {
+		return threadIdStateMap.get(threadId);
+	}
+
+	public class AgentToSubCompiledGraphNodeAdapter implements NodeActionWithConfig, ResumableSubGraphAction {
+
+		private String nodeId;
+
+		private boolean includeContents;
+
+		private boolean returnReasoningContents;
+
+		private String instruction;
+
+		private CompiledGraph childGraph;
+
+		private CompileConfig parentCompileConfig;
+
+		public AgentToSubCompiledGraphNodeAdapter(String nodeId, boolean includeContents,
+				boolean returnReasoningContents, CompiledGraph childGraph, String instruction,
+				CompileConfig parentCompileConfig) {
+			this.nodeId = nodeId;
+			this.includeContents = includeContents;
+			this.returnReasoningContents = returnReasoningContents;
+			this.instruction = instruction;
+			this.childGraph = childGraph;
+			this.parentCompileConfig = parentCompileConfig;
+		}
+
+		@Override
+		public String getResumeSubGraphId() {
+			return resumeSubGraphId(nodeId);
+		}
+
+		@Override
+		public Map<String, Object> apply(OverAllState parentState, RunnableConfig config) throws Exception {
+			final boolean resumeSubgraph = config.metadata(resumeSubGraphId(nodeId), new TypeRef<Boolean>() {
+			}).orElse(false);
+
+			RunnableConfig subGraphRunnableConfig = getSubGraphRunnableConfig(config);
+			Flux<GraphResponse<NodeOutput>> subGraphResult;
+			Object parentMessages = null;
+
+			// Instruction is always injected by InstructionAgentHook in beforeAgent; do
+			// not add here
+			if (includeContents) {
+				Map<String, Object> stateForChild = childStateWithoutAuthority(parentState.data());
+				List<Object> newMessages;
+				if (stateForChild.get("messages") != null) {
+					newMessages = new ArrayList<>((List<Object>) stateForChild.remove("messages"));
+				}
+				else {
+					newMessages = new ArrayList<>();
+				}
+				stateForChild.put("messages", ReplaceAllWith.of(canonicalizeMessages(newMessages)));
+				// Apply the snapshot marker before state serialization so message types stay intact.
+				OverAllState childInput = new OverAllState(stateForChild, childGraph.compileConfig.getStore());
+				childInput.registerKeyAndStrategy(childGraph.getKeyStrategyMap());
+				subGraphResult = childGraph.graphResponseStream(childInput, subGraphRunnableConfig);
+			}
+			else {
+				Map<String, Object> stateForChild = childStateWithoutAuthority(parentState.data());
+				parentMessages = stateForChild.remove("messages");
+				subGraphResult = childGraph.graphResponseStream(stateForChild, subGraphRunnableConfig);
+			}
+
+			Map<String, Object> result = new HashMap<>();
+
+			String outputKeyToParent = StringUtils.hasLength(ReactAgent.this.outputKey) ? ReactAgent.this.outputKey
+					: "messages";
+			result.put(outputKeyToParent, getGraphResponseFlux(parentState, subGraphResult, null));
+			return result;
+		}
+
+		private @NonNull Flux<GraphResponse<NodeOutput>> getGraphResponseFlux(OverAllState parentState,
+				Flux<GraphResponse<NodeOutput>> subGraphResult, AgentInstructionMessage instructionMessage) {
+			return Flux.defer(() -> {
+				AtomicReference<List<?>> inheritedMessages = new AtomicReference<>(includeContents
+						? canonicalizeMessages(new ArrayList<>(parentState.<List<?>>value("messages").orElse(List.of())))
+						: List.of());
+				return subGraphResult.doOnNext(response -> {
+					if (response.getOutput() != null && !response.getOutput().isCompletedExceptionally()) {
+						NodeOutput output = response.getOutput().join();
+						if (START.equals(output.node()) && !output.isSubGraph()) {
+							// Capture the child's actual initial history, including restored checkpoint messages.
+							inheritedMessages.set(new ArrayList<>(output.state().<List<?>>value("messages")
+								.orElse(List.of())));
+						}
+					}
+				}).buffer(2, 1).map(window -> window.size() == 1
+						? processLastResponse(window.get(0), inheritedMessages.get(), instructionMessage)
+						: window.get(0));
+			});
+		}
+
+		/**
+		 * Process the last response by filtering messages based on parent state and
+		 * returnReasoningContents flag.
+		 * @param lastResponse the last response from sub-graph
+		 * @param inheritedMessages the initial child history whose occurrences are already owned by the parent
+		 * @return processed GraphResponse with filtered messages
+		 */
+		private GraphResponse<NodeOutput> processLastResponse(GraphResponse<NodeOutput> lastResponse,
+				List<?> inheritedMessages, AgentInstructionMessage instructionMessage) {
+			if (lastResponse == null) {
+				return lastResponse;
+			}
+
+			if (lastResponse.resultValue().isPresent()) {
+				Object resultValue = lastResponse.resultValue().get();
+				if (resultValue instanceof Map) {
+					@SuppressWarnings("unchecked")
+					Map<String, Object> resultMap = (Map<String, Object>) resultValue;
+					if (resultMap.get("messages") instanceof List) {
+						@SuppressWarnings("unchecked")
+						List<Object> messages = new ArrayList<>((List<Object>) resultMap.get("messages"));
+						if (!messages.isEmpty()) {
+							// Subtract each inherited occurrence once; removeAll would also erase new equal messages.
+							for (Object inherited : inheritedMessages) {
+								messages.remove(inherited);
+							}
+
+							List<Object> finalMessages;
+							if (returnReasoningContents) {
+								finalMessages = messages;
+							}
+							else {
+								if (!messages.isEmpty()) {
+									if (instructionMessage != null) {
+										finalMessages = new ArrayList<>();
+										finalMessages.add(instructionMessage);
+										finalMessages.add(messages.get(messages.size() - 1));
+									}
+									else {
+										finalMessages = List.of(messages.get(messages.size() - 1));
+									}
+								}
+								else {
+									finalMessages = List.of();
+								}
+							}
+
+							Map<String, Object> newResultMap = new HashMap<>(resultMap);
+							newResultMap.put("messages", tagChildHandoffMessages(finalMessages));
+							return GraphResponse.done(newResultMap, lastResponse.getAllMetadata());
+						}
+					}
+				}
+			}
+			return lastResponse;
+		}
+
+		private static Map<String, Object> childStateWithoutAuthority(Map<String, Object> parentData) {
+			Map<String, Object> copy = new HashMap<>();
+			if (parentData == null) {
+				return copy;
+			}
+			for (Map.Entry<String, Object> entry : parentData.entrySet()) {
+				if (!ContextAuthorityKeys.isProtected(entry.getKey())) {
+					copy.put(entry.getKey(), entry.getValue());
+				}
+			}
+			return copy;
+		}
+
+		private static List<Object> canonicalizeMessages(List<Object> messages) {
+			List<Object> canonical = new ArrayList<>(messages.size());
+			for (Object item : messages) {
+				if (item instanceof ChatMessage chatMessage) {
+					canonical.add(MessageProvenance.canonicalize(chatMessage));
+				}
+				else {
+					canonical.add(item);
+				}
+			}
+			return canonical;
+		}
+
+		private static List<Object> tagChildHandoffMessages(List<Object> messages) {
+			List<Object> tagged = new ArrayList<>(messages.size());
+			for (Object item : messages) {
+				if (item instanceof ChatMessage chatMessage) {
+					tagged.add(MessageProvenance.forChildHandoff(chatMessage));
+				}
+				else {
+					tagged.add(item);
+				}
+			}
+			return tagged;
+		}
+
+		private RunnableConfig getSubGraphRunnableConfig(RunnableConfig config) {
+			RunnableConfig subGraphRunnableConfig = RunnableConfig.builder(config)
+				.checkPointId(null)
+				.nextNode(null)
+				.addMetadata("_AGENT_", subGraphId(nodeId)) // subGraphId is the same as
+															// the name of the agent that
+															// created it
+				.build();
+			subGraphRunnableConfig.clearContext();
+			var parentSaver = parentCompileConfig.checkpointSaver();
+			var subGraphSaver = childGraph.compileConfig.checkpointSaver();
+
+			if (subGraphSaver.isPresent()) {
+				if (parentSaver.isEmpty()) {
+					throw new IllegalStateException("Missing CheckpointSaver in parent graph!");
+				}
+
+				// Check saver are the same instance
+				if (parentSaver.get() == subGraphSaver.get()) {
+					subGraphRunnableConfig = RunnableConfig.builder(config)
+						.threadId(config.threadId()
+							.map(threadId -> format("%s_%s", threadId, subGraphId(nodeId)))
+							.orElseGet(() -> subGraphId(nodeId)))
+						.nextNode(null)
+						.checkPointId(null)
+						.addMetadata("_AGENT_", subGraphId(nodeId)) // subGraphId is the
+																	// same as the name of
+																	// the agent that
+																	// created it
+						.build();
+					subGraphRunnableConfig.clearContext();
+				}
+			}
+			return subGraphRunnableConfig;
+		}
+
+	}
+
+	/**
+	 * Internal class that adapts a ReactAgent to be used as a SubGraph Node.
+	 */
+	private class AgentSubGraphNode extends Node implements SubGraphNode {
+
+		private final CompiledGraph subGraph;
+
+		public AgentSubGraphNode(String id, boolean includeContents, boolean returnReasoningContents,
+				CompiledGraph subGraph, String instruction) {
+			super(Objects.requireNonNull(id, "id cannot be null"),
+					(config) -> node_async(new AgentToSubCompiledGraphNodeAdapter(id, includeContents,
+							returnReasoningContents, subGraph, instruction, config)));
+			this.subGraph = subGraph;
+		}
+
+		@Override
+		public StateGraph subGraph() {
+			return subGraph.stateGraph;
+		}
+
+		@Override
+		public Map<String, KeyStrategy> keyStrategies() {
+			return subGraph.getKeyStrategyMap();
+		}
+
+	}
+
+}

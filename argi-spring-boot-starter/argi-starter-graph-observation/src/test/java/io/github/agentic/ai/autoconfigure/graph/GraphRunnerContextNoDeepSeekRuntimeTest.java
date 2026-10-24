@@ -19,7 +19,7 @@ import java.lang.reflect.Method;
 import java.util.Map;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
-import io.github.agentic.ai.graph.GraphRunnerContext;
+import io.github.agentic.ai.workflow.graph.GraphRunnerContext;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
