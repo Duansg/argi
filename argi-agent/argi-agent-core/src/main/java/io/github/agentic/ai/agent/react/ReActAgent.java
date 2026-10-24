@@ -549,7 +549,7 @@ public final class ReActAgent implements Agent {
 				ChatMessage terminal) {
 			Map<String, Object> outputs = new LinkedHashMap<>(state);
 			if (outputSchema != null && outputFinalizer != null) {
-				AgentResult result = outputFinalizer.finalizeOutput(terminal, outputSchema, usage);
+				AgentResult result = outputFinalizer.finalizeOutput(terminal, outputSchema, usage, context.control());
 				if (result.status() != AgentResult.Status.COMPLETED) {
 					throw new AgentExecutionException(result);
 				}

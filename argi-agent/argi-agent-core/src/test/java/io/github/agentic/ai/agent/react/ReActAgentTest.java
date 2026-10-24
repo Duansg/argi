@@ -38,9 +38,11 @@ import io.github.agentic.ai.agent.interceptor.ModelCallHandler;
 import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
 import io.github.agentic.ai.agent.interceptor.ModelRequest;
 import io.github.agentic.ai.agent.interceptor.ModelResponse;
+import io.github.agentic.ai.agent.result.StructuredOutputFinalizer;
 import io.github.agentic.ai.agent.tool.patch.ToolContextPatchPolicy;
 import io.github.agentic.ai.runtime.execution.DelegationScope;
 import io.github.agentic.ai.runtime.execution.ExecutionBudget;
+import io.github.agentic.ai.runtime.execution.ExecutionStoppedException;
 import io.github.agentic.ai.runtime.execution.PrincipalReference;
 import io.github.agentic.ai.runtime.execution.TenantReference;
 import io.github.agentic.ai.runtime.execution.TrustedExecutionContext;
@@ -234,6 +236,44 @@ class ReActAgentTest {
 							.keyType("count", Integer.class).build()).build())
 				.build().invoke(request(), context()).get(3, TimeUnit.SECONDS);
 		assertEquals(1, outcome.outputs().get("count"));
+	}
+
+	@Test
+	void stoppedControlSkipsOutputRepairAndPropagatesTheStop() throws Exception {
+		try (AgentExecutionContext context = context()) {
+			ScriptedClient client = new ScriptedClient(List.of(response(ChatMessage.assistant("not json"), List.of(), 1))) {
+				public synchronized CompletionStage<ChatResponse> call(ChatRequest request) {
+					context.control().cancel(); // the run is stopped while its terminal turn is produced
+					return super.call(request);
+				}
+			};
+			AtomicInteger repairs = new AtomicInteger();
+			ChatClient repairClient = new ChatClient() {
+				public CompletionStage<ChatResponse> call(ChatRequest request) {
+					repairs.incrementAndGet();
+					throw new AssertionError("the repair client must not be called");
+				}
+
+				public Flow.Publisher<ChatEvent> stream(ChatRequest request) {
+					throw new UnsupportedOperationException();
+				}
+
+				public ChatClientCapabilities capabilities() {
+					return ChatClientCapabilities.basic();
+				}
+			};
+			ReActAgent agent = ReActAgent.builder(client)
+					.outputSchema("{\"type\":\"object\",\"required\":[\"status\"],"
+							+ "\"additionalProperties\":false,\"properties\":{\"status\":{\"type\":\"string\"}}}")
+					.outputFinalizer(new StructuredOutputFinalizer(repairClient))
+					.build();
+
+			ExecutionStoppedException stopped = assertThrows(ExecutionStoppedException.class,
+					() -> agent.invoke(request(), context).get(3, TimeUnit.SECONDS));
+
+			assertEquals(ExecutionStoppedException.Reason.CANCELLED, stopped.reason());
+			assertEquals(0, repairs.get());
+		}
 	}
 
 	private static AgentRequest request() {

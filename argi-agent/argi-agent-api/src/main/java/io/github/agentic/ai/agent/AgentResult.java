@@ -59,6 +59,9 @@ public record AgentResult(ChatMessage message, Status status, Usage usage, Objec
 	/** Error code marking that the single bounded repair attempt still failed validation. */
 	public static final String ERROR_CODE_REPAIRED_STILL_INVALID = "REPAIRED_STILL_INVALID";
 
+	/** Error code marking that the bounded repair re-ask could not be performed at all. */
+	public static final String ERROR_CODE_REPAIR_CALL_FAILED = "REPAIR_CALL_FAILED";
+
 	/**
 	 * Delivery status of the run.
 	 */
