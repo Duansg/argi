@@ -25,8 +25,10 @@ import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.ChatRequest;
 
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -62,11 +64,14 @@ public class ToolEmulatorInterceptor extends ToolInterceptor {
 
 	private final String promptTemplate;
 
+	private final Map<String, String> toolDescriptions;
+
 	private ToolEmulatorInterceptor(Builder builder) {
 		this.chatClient = builder.chatClient;
 		this.emulateAll = builder.emulateAll;
 		this.toolsToEmulate = new HashSet<>(builder.toolsToEmulate);
 		this.promptTemplate = builder.promptTemplate;
+		this.toolDescriptions = Map.copyOf(builder.toolDescriptions);
 	}
 
 	public static Builder builder() {
@@ -94,14 +99,9 @@ public class ToolEmulatorInterceptor extends ToolInterceptor {
 
 		try {
 			// Build prompt for emulator LLM
-			String prompt = String.format(promptTemplate, toolName, "No description available", // TODO:
-																								// Tool
-																								// descriptions
-																								// not
-																								// available
-																								// in
-																								// ToolCallRequest
-					request.getArguments());
+			// Tool call requests carry no definitions, so descriptions are configured here.
+			String description = toolDescriptions.getOrDefault(toolName, "No description available");
+			String prompt = String.format(promptTemplate, toolName, description, request.getArguments());
 
 			// Get emulated response from LLM
 			String emulatedResult = chatClient.callBlocking(ChatRequest.of(List.of(ChatMessage.user(prompt)))).text();
@@ -128,6 +128,8 @@ public class ToolEmulatorInterceptor extends ToolInterceptor {
 	public static class Builder {
 
 		private final Set<String> toolsToEmulate = new HashSet<>();
+
+		private final Map<String, String> toolDescriptions = new HashMap<>();
 
 		private ChatClient chatClient;
 
@@ -166,6 +168,15 @@ public class ToolEmulatorInterceptor extends ToolInterceptor {
 		 */
 		public Builder addTools(Collection<String> toolNames) {
 			this.toolsToEmulate.addAll(toolNames);
+			return this;
+		}
+
+		/**
+		 * Describe a tool to the emulator model. Without a description the prompt states
+		 * that none is available, which usually yields less realistic output.
+		 */
+		public Builder toolDescription(String toolName, String description) {
+			this.toolDescriptions.put(toolName, description);
 			return this;
 		}
 

@@ -10,7 +10,6 @@ runtime dependency. The root `pom.xml` aggregates each child module directly.
 | `argi-adapter-spring-ai` | `argi-adapter-spring-ai` | Adapt Spring AI ChatClient and ChatModel |
 | `argi-adapter-langchain4j` | `argi-adapter-langchain4j` | Adapt LangChain4j chat and streaming models |
 | `argi-adapter-google-adk` | `argi-adapter-google-adk` | Adapt Google ADK BaseLlm |
-| `argi-adapter-agentscope` | `argi-adapter-agentscope` | Adapt AgentScope Model |
 
 All artifacts use the group ID `io.github.agentic-ai-java`. The `argi-api-base`
 directory intentionally publishes as **`argi-api`**: applications should not need
@@ -27,7 +26,7 @@ From the repository root:
 
 ```shell
 ./mvnw -B -pl :argi-api -am test
-./mvnw -B -pl :argi-adapter-spring-ai,:argi-adapter-langchain4j,:argi-adapter-google-adk,:argi-adapter-agentscope -am test
+./mvnw -B -pl :argi-adapter-spring-ai,:argi-adapter-langchain4j,:argi-adapter-google-adk -am test
 ```
 
 For path-based module selection, use the complete child path, for example
@@ -39,7 +38,7 @@ Java packages, and adapter behavior are unchanged by the directory move.
 
 Import `io.github.agentic-ai-java:argi-bom` at the ARGI version used by the
 application. For a standalone ReAct application, add `argi-agent-framework` and
-one of the four adapter artifacts. A graph-only application uses `argi-workflow-graph-core`
+one of the three adapter artifacts. A graph-only application uses `argi-workflow-graph-core`
 and, for built-in model nodes, `argi-starter-builtin-nodes` instead. The directory
 name `argi-api-base` is not a dependency coordinate.
 
@@ -51,9 +50,8 @@ wraps it explicitly. Adapter constructors accept these native types:
 | `SpringAiChatClientAdapter` | Spring AI `ChatModel` or `ChatClient` |
 | `LangChain4jChatClientAdapter` | LangChain4j `ChatModel`, optionally with `StreamingChatModel` |
 | `GoogleAdkChatClientAdapter` | Google ADK `BaseLlm` |
-| `AgentScopeChatClientAdapter` | AgentScope `Model` |
 
-After wrapping, the agent code is the same for all four frameworks:
+After wrapping, the agent code is the same for all three frameworks:
 
 ```java
 import io.github.agentic.ai.api.chat.ChatClient;
@@ -99,7 +97,7 @@ constants or Maven command-line secrets.
   -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
-The matrix covers four adapters, Graph and ReAct tool loops, and synchronous and
+The matrix covers three adapters, Graph and ReAct tool loops, and synchronous and
 streaming calls. ADK uses its `ApigeeLlm` OpenAI-compatible transport in this
 matrix; it does not validate native Gemini/Vertex AI, native ADK Claude, or the
 upstream identity of a model served by a gateway. Studio's optional Jina MCP
@@ -215,7 +213,7 @@ and `ToolRegistry`; existing Spring AI callbacks can be explicitly wrapped with
 The API, Graph, Agent/ReAct, Studio, and generic starters use neutral messages,
 tools, serializers, and model calls. Their production sources, compiled classes,
 and runtime dependency trees must not reference provider SDKs or adapters. Provider
-SDKs are confined to the four adapter modules and their dedicated starters;
+SDKs are confined to the three adapter modules and their dedicated starters;
 test-scoped adapter fixtures do not become application dependencies. Third-party
 Native Agent Mode is not implemented in this phase.
 
@@ -305,7 +303,7 @@ compatible**. They fail explicitly; they must not become user messages or disapp
 Template content must be resolved with the previous runtime. There is no bundled
 one-command binary export tool: use the old runtime and an application-specific
 export that emits the supported historical JSON layout or neutral messages.
-Do not pass legacy maps directly to `Messageutils`; deserialize them first.
+Do not pass legacy maps directly to `MessageUtils`; deserialize them first.
 
 Before deployment:
 
@@ -363,8 +361,6 @@ Studio attaches turn usage only to the final event when splitting a multi-messag
 output. Earlier split events carry unknown usage. Upgrade SSE consumers for
 `inputTokens`, `outputTokens`, `totalTokens` rather than the previous
 `promptTokens` / `completionTokens` fields; do not accumulate usage per message.
-AgentScope uses the native total-token getter, without assuming a provider total
-can always be reconstructed from input and output tokens.
 
 The agent framework uses JSON Schema Validator 3.x for its current neutral tool
 validation API. Studio pins 1.5.7 in test scope because its MCP fixture requires

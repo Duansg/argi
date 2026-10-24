@@ -38,7 +38,7 @@ import org.slf4j.LoggerFactory;
  *
  * Example:
  * ToolRetryInterceptor interceptor = ToolRetryInterceptor.builder()
- *     .maxRetries(3)
+ *     .maxAttempts(4)
  *     .backoffFactor(2.0)
  *     .initialDelay(1000)
  *     .build();
@@ -205,20 +205,6 @@ public class ToolRetryInterceptor extends ToolInterceptor {
 				throw new IllegalArgumentException("maxAttempts must be >= 1");
 			}
 			this.maxAttempts = maxAttempts;
-			return this;
-		}
-
-		/**
-		 * Set the maximum number of retries (excluding the first call).
-		 * @param maxRetries number of retries; total attempts will be {@code maxRetries + 1}
-		 * @deprecated use {@link #maxAttempts(int)} instead, which counts the initial call
-		 */
-		@Deprecated
-		public Builder maxRetries(int maxRetries) {
-			if (maxRetries < 0) {
-				throw new IllegalArgumentException("maxRetries must be >= 0");
-			}
-			this.maxAttempts = maxRetries + 1;
 			return this;
 		}
 

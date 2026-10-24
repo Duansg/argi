@@ -208,10 +208,13 @@ public class GraphRunnerContext {
 		this.nextNodeId = null;
 	}
 
-	// FIXME, duplicated method with CompiledGraph.stateCreate, need to have a
-	// unified way of when and how to do OverallState creation.
-	// This temporary fix is to make sure the message provided by user is always the
-	// last element in the messages list.
+	/**
+	 * Rebuild the run state from merged inputs. Unlike {@code CompiledGraph.stateCreate},
+	 * which starts a new run from the graph's key strategies and compile-time store, this
+	 * keeps the key strategies and store of the state handed to the runner, so resumed and
+	 * subgraph runs observe the same merge rules. Rebuilding after the merge also keeps
+	 * the message provided by the user as the last element of the messages list.
+	 */
 	private OverAllState stateCreate(Map<String, Object> inputs, OverAllState initialState) {
 		// Creates a new OverAllState instance using key strategies from the graph and
 		// provided input data.
@@ -390,11 +393,20 @@ public class GraphRunnerContext {
 	// ================================================================================================================
 
 	public NodeOutput buildOutput(String nodeId, Optional<Checkpoint> checkpoint) throws Exception {
+		Optional<NodeOutput> snapshot = snapshotOutput(checkpoint);
+		return snapshot.isPresent() ? snapshot.get() : buildNodeOutput(nodeId);
+	}
+
+	/**
+	 * In {@link CompiledGraph.StreamMode#SNAPSHOTS} mode a node that produced a checkpoint
+	 * is reported as the persisted snapshot instead of an incremental output.
+	 */
+	private Optional<NodeOutput> snapshotOutput(Optional<Checkpoint> checkpoint) {
 		if (checkpoint.isPresent() && config.streamMode() == CompiledGraph.StreamMode.SNAPSHOTS) {
-			return StateSnapshot.of(getKeyStrategyMap(), checkpoint.get(), config,
-					compiledGraph.stateGraph.getStateSerializer().stateFactory());
+			return Optional.of(StateSnapshot.of(getKeyStrategyMap(), checkpoint.get(), config,
+					compiledGraph.stateGraph.getStateSerializer().stateFactory()));
 		}
-		return buildNodeOutput(nodeId);
+		return Optional.empty();
 	}
 
 	public StreamingOutput<?> buildStreamingOutput(ChatMessage message, Object originData, String nodeId,
@@ -637,8 +649,8 @@ public class GraphRunnerContext {
 	}
 
 	/**
-	 * FIXME Below are duplicated methods. Need to have a unified way of streaming output
-	 * to end user.
+	 * Record a checkpoint for the current transition and build the output reported for the
+	 * node, carrying the latest message turn from {@code updateStates}.
 	 */
 	public NodeOutput buildNodeOutputAndAddCheckpoint(Map<String, Object> updateStates) throws Exception {
 		Optional<Checkpoint> cp = addCheckpoint(currentNodeId, nextNodeId);
@@ -647,11 +659,8 @@ public class GraphRunnerContext {
 
 	public NodeOutput buildOutput(String nodeId, Map<String, Object> updateStates, Optional<Checkpoint> checkpoint,
 			boolean streaming) throws Exception {
-		if (checkpoint.isPresent() && config.streamMode() == CompiledGraph.StreamMode.SNAPSHOTS) {
-			return StateSnapshot.of(getKeyStrategyMap(), checkpoint.get(), config,
-					compiledGraph.stateGraph.getStateSerializer().stateFactory());
-		}
-		return buildNodeOutput(nodeId, updateStates, streaming);
+		Optional<NodeOutput> snapshot = snapshotOutput(checkpoint);
+		return snapshot.isPresent() ? snapshot.get() : buildNodeOutput(nodeId, updateStates, streaming);
 	}
 
 	public NodeOutput buildNodeOutput(String nodeId, Map<String, Object> updateStates, boolean streaming)

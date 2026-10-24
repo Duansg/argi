@@ -96,6 +96,20 @@ class ToolEmulatorInterceptorTests {
 	}
 
 	@Test
+	void configuredToolDescriptionIsIncludedInPrompt() {
+		ToolEmulatorInterceptor interceptor = ToolEmulatorInterceptor.builder()
+			.chatClient(client)
+			.toolDescription("weather", "Current weather for a city")
+			.promptTemplate("Emulate %s (%s) with %s")
+			.build();
+		interceptor.interceptToolCall(request, handler);
+		ArgumentCaptor<ChatRequest> captured = ArgumentCaptor.forClass(ChatRequest.class);
+		verify(client).call(captured.capture());
+		assertThat(captured.getValue().messages().get(0).text())
+			.isEqualTo("Emulate weather (Current weather for a city) with " + request.getArguments());
+	}
+
+	@Test
 	void unlistedToolsExecuteNormally() {
 		ToolCallResponse actual = ToolCallResponse.of("call-17", "weather", "Rainy");
 		when(handler.call(request)).thenReturn(actual);

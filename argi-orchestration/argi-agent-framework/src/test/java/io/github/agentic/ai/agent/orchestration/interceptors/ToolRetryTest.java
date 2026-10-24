@@ -70,7 +70,7 @@ class ToolRetryTest {
 
 		// Create tool retry interceptor
 		ToolRetryInterceptor toolRetryInterceptor = ToolRetryInterceptor.builder()
-			.maxRetries(3)
+			.maxAttempts(4)
 			.initialDelay(100)
 			.backoffFactor(2.0)
 			.build();
@@ -116,7 +116,7 @@ class ToolRetryTest {
 
 		// Create tool retry interceptor with limited retries
 		ToolRetryInterceptor toolRetryInterceptor = ToolRetryInterceptor.builder()
-			.maxRetries(2)
+			.maxAttempts(3)
 			.initialDelay(50)
 			.onFailure(ToolRetryInterceptor.OnFailureBehavior.RAISE)
 			.build();
@@ -166,7 +166,7 @@ class ToolRetryTest {
 
 		// Create tool retry interceptor for specific tool only
 		ToolRetryInterceptor toolRetryInterceptor = ToolRetryInterceptor.builder()
-			.maxRetries(2)
+			.maxAttempts(3)
 			.initialDelay(50)
 			.toolName("specific_tool")
 			.build();

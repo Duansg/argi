@@ -28,7 +28,7 @@ import io.github.agentic.ai.agent.orchestration.interceptor.InterceptorChain;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallExecutionContext;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallHandler;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallRequest;
-import io.github.agentic.ai.agent.interceptor.BusinessOutcomeMapperRegistry;
+import io.github.agentic.ai.agent.outcome.BusinessOutcomeMapperRegistry;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolOutcome;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolCallResponse;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolInterceptor;

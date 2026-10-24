@@ -23,8 +23,6 @@ import io.github.agentic.ai.workflow.graph.action.AsyncNodeActionWithConfig;
 import io.github.agentic.ai.workflow.graph.action.Command;
 import io.github.agentic.ai.workflow.graph.action.CommandAction;
 import io.github.agentic.ai.workflow.graph.action.MultiCommand;
-import io.github.agentic.ai.workflow.graph.async.AsyncGenerator;
-import io.github.agentic.ai.workflow.graph.async.AsyncGeneratorQueue;
 import io.github.agentic.ai.workflow.graph.exception.GraphStateException;
 import io.github.agentic.ai.workflow.graph.serializer.plain_text.PlainTextStateSerializer;
 import io.github.agentic.ai.workflow.graph.serializer.plain_text.jackson.ArgiJacksonStateSerializer;
@@ -45,7 +43,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,7 +58,7 @@ import static io.github.agentic.ai.workflow.graph.StateGraph.START;
 import static io.github.agentic.ai.workflow.graph.action.AsyncEdgeAction.edge_async;
 import static io.github.agentic.ai.workflow.graph.action.AsyncNodeAction.node_async;
 import static java.util.concurrent.CompletableFuture.completedFuture;
-import static org.junit.Assert.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertIterableEquals;
@@ -428,11 +425,9 @@ public class StateGraphTest {
 	private AsyncNodeAction makeNodeForStream(String id) {
 		return node_async(state -> {
 			log.info("call node {}", id);
-			final AsyncGenerator<NodeOutput> it = AsyncGeneratorQueue.of(new LinkedBlockingQueue<>(), queue -> {
-				for (int i = 0; i < 10; ++i) {
-					queue.add(AsyncGenerator.Data.of(completedFuture(new StreamingOutput(id + i, id, state))));
-				}
-			});
+			Flux<GraphResponse<NodeOutput>> it = Flux.range(0, 10)
+				.map(i -> GraphResponse.<NodeOutput>of(new StreamingOutput<>(id + i, id, state)))
+				.concatWith(Flux.just(GraphResponse.done(Map.of("messages", id))));
 
 			return Map.of("messages", it);
 		});
@@ -555,9 +550,17 @@ public class StateGraphTest {
 			.addEdge("C", END);
 		var app = workflow.compile();
 
-		app.stream(Map.of()).subscribe(output -> {
-			System.out.println("Node output: " + output);
-		});
+		List<NodeOutput> outputs = app.stream(Map.of()).collectList().block(java.time.Duration.ofSeconds(10));
+
+		assertNotNull(outputs);
+		// Each streaming branch emits ten business chunks; completion snapshots are excluded.
+		long chunks = outputs.stream()
+			.filter(StreamingOutput.class::isInstance)
+			.map(output -> ((StreamingOutput<?>) output).getOriginData())
+			.filter(data -> data instanceof String text && text.matches("A[12]\\d"))
+			.count();
+		assertEquals(20, chunks);
+		assertEquals(StateGraph.END, outputs.get(outputs.size() - 1).node());
 	}
 
 	@Test

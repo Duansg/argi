@@ -57,17 +57,6 @@ public interface HasMetadata<B extends HasMetadata.Builder<B>> {
 		return metadata(key).flatMap(typeRef::cast);
 	}
 
-	/**
-	 * return metadata value for key
-	 * @param key given metadata key
-	 * @return metadata value for key if any
-	 * @deprecated use {@link #metadata(String)} instead
-	 */
-	@Deprecated(forRemoval = true)
-	default Optional<Object> getMetadata(String key) {
-		return metadata(key);
-	};
-
 	default <T> Optional<T> getMetadataAndRemove(String key, TypeRef<T> typeRef) {
 		Optional<T> value = metadata(key, typeRef);
 		if (value.isPresent()) {

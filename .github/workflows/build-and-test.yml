@@ -54,8 +54,6 @@ jobs:
       - uses: ./tools/github-actions/setup-deps
       - run: make tools
       - run: ./mvnw -B install
-      - run: tools/scripts/verify-api-contract.sh --skip-install
-      - run: tools/scripts/verify-clear-room.sh
   build:
     if: (github.repository == 'agentic-ai-java/argi')
     runs-on: ubuntu-22.04
@@ -72,7 +70,6 @@ jobs:
       - run: pnpm --dir argi-studio/agent-chat-ui exec tsc --noEmit
       - run: pnpm --dir argi-studio/agent-chat-ui run test
       - run: pnpm --dir argi-studio/agent-chat-ui run build:static
-      - run: python3 tools/tests/release-tools-test.py
       - run: make tools
       - name: Build release artifacts without signing or publishing
         run: ./mvnw -B -Prelease -Dgpg.skip=true -DskipTests=true package

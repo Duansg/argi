@@ -149,26 +149,4 @@ class ToolRetryInterceptorUnitTest {
 				}));
 		assertEquals(1, calls.get());
 	}
-
-	@Test
-	@SuppressWarnings("deprecation")
-	void deprecatedMaxRetriesAliasMapsToAttempts() {
-		// maxRetries(n) == maxAttempts(n + 1)
-		AtomicInteger calls = new AtomicInteger();
-		ToolRetryInterceptor.builder().maxRetries(2).initialDelay(1).jitter(false).build()
-			.interceptToolCall(request(), r -> {
-				calls.incrementAndGet();
-				throw new RuntimeException("boom");
-			});
-		assertEquals(3, calls.get());
-
-		// The previously buggy edge case: maxRetries(0) must still run the tool once, not zero times.
-		AtomicInteger zeroCalls = new AtomicInteger();
-		ToolRetryInterceptor.builder().maxRetries(0).initialDelay(1).jitter(false).build()
-			.interceptToolCall(request(), r -> {
-				zeroCalls.incrementAndGet();
-				throw new RuntimeException("boom");
-			});
-		assertEquals(1, zeroCalls.get());
-	}
 }

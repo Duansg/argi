@@ -55,8 +55,7 @@ public class DeepLoopStackDepthTest {
 					edge_async(state -> (int) state.value("count").orElse(0) < ITERATIONS ? "loop" : "done"),
 					Map.of("loop", "worker", "done", END));
 
-		CompiledGraph app = graph.compile();
-		app.setMaxIterations(ITERATIONS + 10);
+		CompiledGraph app = graph.compile(CompileConfig.builder().recursionLimit(ITERATIONS + 10).build());
 
 		// Before the fix the StackOverflowError was swallowed by Reactor (onErrorDropped)
 		// and the stream never terminated, so guard with a timeout instead of blocking forever.

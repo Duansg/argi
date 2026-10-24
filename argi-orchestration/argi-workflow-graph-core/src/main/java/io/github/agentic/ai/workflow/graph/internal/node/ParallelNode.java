@@ -36,7 +36,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingDeque;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.Semaphore;
@@ -61,12 +60,6 @@ public class ParallelNode extends Node {
 
 	public static final String MAX_CONCURRENCY_KEY = "__MAX_CONCURRENCY__";
 
-	static {
-		Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-			shutdownDefaultExecutor();
-		}, "default-executor-shutdown-hook"));
-	}
-
 	private static final ThreadFactory DEFAULT_THREAD_FACTORY = new ThreadFactory() {
 		private final AtomicInteger threadNum = new AtomicInteger(1);
 
@@ -76,7 +69,8 @@ public class ParallelNode extends Node {
 		public Thread newThread(Runnable r) {
 			Thread thread = new Thread(r);
 			thread.setName(prefix + threadNum.getAndIncrement());
-			thread.setDaemon(false); // Non-daemon thread to ensure task completion
+			// The shared pool is never shut down, so its workers must not keep the JVM alive.
+			thread.setDaemon(true);
 			thread.setUncaughtExceptionHandler((t, e) -> logger
 				.error("Thread {} encountered an exception during task execution: {}", t.getName(), e.getMessage(), e));
 			return thread;
@@ -117,10 +111,12 @@ public class ParallelNode extends Node {
 	 * Optimized default thread pool executor based on industry best practices. Features:
 	 * 1. Dynamic core pool size based on system resources 2. Higher maximum pool size for
 	 * handling burst workloads 3. Larger work queue to buffer tasks during peak loads 4.
-	 * Caller runs policy to prevent task rejection under extreme load 5. Configurable
-	 * keep-alive time for better resource management
+	 * Caller runs policy to prevent task rejection under extreme load 5. Idle core and
+	 * burst threads time out, so the process-wide pool releases all threads when idle and
+	 * never needs an explicit shutdown. Applications that need lifecycle control should
+	 * provide their own executor through {@link RunnableConfig}.
 	 */
-	private static final ExecutorService DEFAULT_EXECUTOR = new ThreadPoolExecutor(
+	private static final ThreadPoolExecutor DEFAULT_EXECUTOR = new ThreadPoolExecutor(
 			// Core thread count: CPU cores * 2 (optimized for mixed IO/CPU workloads)
 			calculateCorePoolSize(),
 			// Maximum thread count: CPU cores * 4 (handles burst workloads)
@@ -162,12 +158,11 @@ public class ParallelNode extends Node {
 			}
 		}
 
-		@Override
-		protected void terminated() {
-			super.terminated();
-			logger.info("ParallelNode default thread pool terminated");
-		}
 	};
+
+	static {
+		DEFAULT_EXECUTOR.allowCoreThreadTimeOut(true);
+	}
 
 	/**
 	 * Calculate optimal core pool size based on system resources and workload
@@ -210,28 +205,6 @@ public class ParallelNode extends Node {
 		int queueCapacity = 1000;
 		logger.info("Calculated queue capacity: {}", queueCapacity);
 		return queueCapacity;
-	}
-
-	public static void shutdownDefaultExecutor() {
-		if (!DEFAULT_EXECUTOR.isShutdown()) {
-			logger.info("Shutting down ParallelNode default executor");
-			DEFAULT_EXECUTOR.shutdown();
-			try {
-				// Wait for 60 seconds, force shutdown if tasks remain unfinished
-				if (!DEFAULT_EXECUTOR.awaitTermination(60, TimeUnit.SECONDS)) {
-					logger.warn("ParallelNode default executor did not terminate gracefully, forcing shutdown");
-					DEFAULT_EXECUTOR.shutdownNow();
-				}
-				else {
-					logger.info("ParallelNode default executor shut down successfully");
-				}
-			}
-			catch (InterruptedException e) {
-				logger.warn("Interrupted while waiting for ParallelNode default executor shutdown", e);
-				DEFAULT_EXECUTOR.shutdownNow();
-				Thread.currentThread().interrupt(); // Preserve interrupt status
-			}
-		}
 	}
 
 	public static String formatNodeId(String nodeId) {

@@ -53,6 +53,8 @@ public class A2aRemoteAgent extends BaseAgent {
 
 	private AgentTracer agentTracer;
 
+	private String userIdMetadataKey;
+
 	// Private constructor for Builder pattern
 	private A2aRemoteAgent(Builder builder) {
 		super(builder.name, builder.description, builder.includeContents, builder.returnReasoningContents, builder.outputKey, builder.outputKeyStrategy);
@@ -64,6 +66,7 @@ public class A2aRemoteAgent extends BaseAgent {
 		this.instruction = builder.instruction;
 		this.shareState = builder.shareState;
 		this.agentTracer = builder.agentTracer;
+		this.userIdMetadataKey = builder.userIdMetadataKey;
 	}
 
 	@Override
@@ -79,7 +82,7 @@ public class A2aRemoteAgent extends BaseAgent {
 		StateGraph graph = new StateGraph(name, this.keyStrategyFactory);
 		graph.addNode("A2aNode", AsyncNodeActionWithConfig.node_async(
 				new A2aNodeActionWithConfig(agentCard, name, includeContents, outputKey, instruction, streaming,
-						this.shareState, this.compileConfig, this.agentTracer)));
+						this.shareState, this.compileConfig, this.agentTracer).userIdMetadataKey(this.userIdMetadataKey)));
 		graph.addEdge(StateGraph.START, "A2aNode");
 		graph.addEdge("A2aNode", StateGraph.END);
 		return graph;
@@ -110,7 +113,7 @@ public class A2aRemoteAgent extends BaseAgent {
 
 		public A2aRemoteAgentNode(String id, boolean includeContents, boolean returnReasoningContents, String instruction, AgentCardWrapper agentCard, boolean streaming, boolean shareState, CompiledGraph subGraph) {
 			super(Objects.requireNonNull(id, "id cannot be null"),
-					(config) -> AsyncNodeActionWithConfig.node_async(new A2aNodeActionWithConfig(agentCard, subGraph.stateGraph.getName(), includeContents, A2aRemoteAgent.this.outputKey, instruction, streaming, shareState, config, A2aRemoteAgent.this.agentTracer)));
+					(config) -> AsyncNodeActionWithConfig.node_async(new A2aNodeActionWithConfig(agentCard, subGraph.stateGraph.getName(), includeContents, A2aRemoteAgent.this.outputKey, instruction, streaming, shareState, config, A2aRemoteAgent.this.agentTracer).userIdMetadataKey(A2aRemoteAgent.this.userIdMetadataKey)));
 			this.subGraph = subGraph;
 		}
 
@@ -151,6 +154,8 @@ public class A2aRemoteAgent extends BaseAgent {
 		private boolean shareState = true;
 
 		private AgentTracer agentTracer;
+
+		private String userIdMetadataKey = A2aNodeActionWithConfig.DEFAULT_USER_ID_METADATA_KEY;
 
 		public Builder name(String name) {
 			this.name = name;
@@ -226,6 +231,17 @@ public class A2aRemoteAgent extends BaseAgent {
 
 		public Builder shareState(boolean shareState) {
 			this.shareState = shareState;
+			return this;
+		}
+
+		/**
+		 * Select the run metadata key whose value is sent to the remote agent as the A2A
+		 * {@code userId} metadata field. Defaults to {@code userId}.
+		 * @param userIdMetadataKey the metadata key
+		 * @return this builder
+		 */
+		public Builder userIdMetadataKey(String userIdMetadataKey) {
+			this.userIdMetadataKey = userIdMetadataKey;
 			return this;
 		}
 

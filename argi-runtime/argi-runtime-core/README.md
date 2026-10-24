@@ -91,7 +91,6 @@ the Loop/data migration work, rather than silently breaking stored Java names.
 ## Verification and Remaining Engine Work
 
     ./mvnw -B -pl :argi-runtime-core -am test
-    tools/scripts/verify-api-contract.sh
 
 Fixtures under src/test/resources/execution were generated with the pre-extraction
 Graph jar from the #218 baseline (8b16e46ce), before rebuilding the new modules.

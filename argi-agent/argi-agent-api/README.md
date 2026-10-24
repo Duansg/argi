@@ -108,15 +108,7 @@ API is explicit, not an automatic replacement for existing Graph calls.
 
 ```sh
 ./mvnw -B -pl :argi-agent-api -am test
-tools/scripts/verify-api-contract.sh
 ```
-
-The independent consumer compiles and executes local model interception, a real
-loopback HTTP call, and a two-step composition through the same Agent interface.
-Its classpath contains exactly Agent API, Runtime API and API. The gate checks
-public signatures, actual bytecode dependencies (java.base only), missing types,
-and duplicate classes in Framework. These are executable contract consumers,
-not production ReAct, declarative Workflow or remote-protocol engines.
 
 Unit tests cover immutable boundaries, suspended outcomes, malformed streams,
 cancellation in both directions, late subscriptions, deadline and ownership loss,

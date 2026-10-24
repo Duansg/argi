@@ -77,9 +77,7 @@ maintainers should review untrusted workflow/script changes before approving run
 No welcome message or label is added automatically. Review requirements are
 managed by repository branch protection or rulesets.
 
-Run local checks before submitting even when upstream CI is available. The CI
-test job installs the tested artifacts once, then uses
-`verify-api-contract.sh --skip-install` to compile the independent consumer.
+Run local checks before submitting even when upstream CI is available.
 
 Commit format example:
 
