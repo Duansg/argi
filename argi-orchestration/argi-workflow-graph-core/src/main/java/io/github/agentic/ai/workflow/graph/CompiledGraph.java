@@ -614,21 +614,6 @@ public class CompiledGraph {
 		return maxIterations;
 	}
 
-	/**
-	 * Sets the maximum number of iterations for the graph execution.
-	 *
-	 * @param maxIterations the maximum number of iterations
-	 * @throws IllegalArgumentException if maxIterations is less than or equal to 0
-	 * @deprecated use CompileConfig.recursionLimit() instead
-	 */
-	@Deprecated(forRemoval = true)
-	public void setMaxIterations(int maxIterations) {
-		if (maxIterations <= 0) {
-			throw new IllegalArgumentException("maxIterations must be > 0!");
-		}
-		this.maxIterations = maxIterations;
-	}
-
 	public GraphResponse<NodeOutput> invokeAndGetResponse(Map<String, Object> inputs, RunnableConfig config) {
 		return graphResponseStream(inputs, config).last().block();
 	}

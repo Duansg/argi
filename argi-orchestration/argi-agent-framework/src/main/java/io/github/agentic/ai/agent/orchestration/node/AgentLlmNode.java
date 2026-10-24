@@ -332,11 +332,8 @@ public class AgentLlmNode implements NodeActionWithConfig {
 		// Create a new list and copy messages from modelRequest
 		List<ChatMessage> messages = new ArrayList<>(modelRequest.getMessages());
 
-		// FIXME, there should have only one ChatMessage.
-		// Users may have added SystemMessages in hooks or somewhere else, simply remove
-		// will cause unexpected agent behaviour.
-		// messages.removeIf(message -> message instanceof ChatMessage && ((ChatMessage)
-		// message).role() == ChatRole.SYSTEM);
+		// System messages added by hooks or callers are kept on purpose: dropping them
+		// would silently change agent behaviour. Duplicates are reported below instead.
 
 		// Add the ChatMessage from modelRequest at the beginning if present
 		if (modelRequest.getSystemMessage() != null) {

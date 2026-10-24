@@ -25,7 +25,7 @@ This file provides guidance for AI assistants working with the ARGI codebase.
 
 ## Project Overview
 
-ARGI (Agent Runtime and Graph Intelligence, pronounced "AR-jee") is a production-ready framework for building agents, workflows, and multi-agent applications. It is forked from Spring AI Alibaba and focuses on stateful agent runtime capabilities: graph orchestration, persistence, context engineering, and human-in-the-loop support. Its runtime consumes framework-neutral `argi-api` contracts. Spring AI, LangChain4j, Google ADK Java, and AgentScope Java are isolated in optional adapters.
+ARGI (Agent Runtime and Graph Intelligence, pronounced "AR-jee") is a production-ready framework for building agents, workflows, and multi-agent applications. It is forked from Spring AI Alibaba and focuses on stateful agent runtime capabilities: graph orchestration, persistence, context engineering, and human-in-the-loop support. Its runtime consumes framework-neutral `argi-api` contracts. Spring AI, LangChain4j, and Google ADK Java are isolated in optional adapters.
 
 > **Naming:** the product display name is *ARGI*. Published Maven coordinates use `io.github.agentic-ai-java:argi-*`, Java packages use `io.github.agentic.ai`, configuration prefixes use `argi.*`, and framework-specific public class names use the `Argi*` prefix.
 
@@ -35,7 +35,7 @@ ARGI (Agent Runtime and Graph Intelligence, pronounced "AR-jee") is a production
 - Context Engineering with human-in-the-loop, context compaction, editing, model call limits
 - Graph-based workflow with conditional routing, nested graphs, parallel execution
 - A2A (Agent-to-Agent) client support (Nacos service discovery lives in the Extensions repository)
-- Multi-model integration through four optional ChatClient adapters, plus MCP (Model Context Protocol)
+- Multi-model integration through three optional ChatClient adapters, plus MCP (Model Context Protocol)
 - Embedded visual debugging studio
 
 ## Repository Structure
@@ -46,8 +46,7 @@ argi/
 │   ├── argi-api-base/           # Publishes argi-api; JDK-only public contracts
 │   ├── argi-adapter-spring-ai/
 │   ├── argi-adapter-langchain4j/
-│   ├── argi-adapter-google-adk/
-│   └── argi-adapter-agentscope/
+│   └── argi-adapter-google-adk/
 ├── argi-runtime/                # Runtime contracts and implementation
 │   ├── argi-runtime-api/
 │   └── argi-runtime-core/
@@ -65,8 +64,7 @@ argi/
 │   ├── argi-starter-graph-observation/ # Observability
 │   ├── argi-starter-adapter-spring-ai/
 │   ├── argi-starter-adapter-langchain4j/
-│   ├── argi-starter-adapter-google-adk/
-│   └── argi-starter-adapter-agentscope/
+│   └── argi-starter-adapter-google-adk/
 └── tools/                             # Build and linting tools
 ```
 
@@ -116,14 +114,14 @@ make licenses-check
 ### Core Components
 
 - **Agent Framework**: Built-in agents like `SequentialAgent`, `ParallelAgent`, `RoutingAgent`, `LoopAgent`.
-- **Graph Core**: Underlying engine for stateful agents, supporting persistence (PostgreSQL, MySQL, Oracle, MongoDB, Redis, File).
-- **A2A (Agent-to-Agent)**: Enables agents to seek and communicate with each other using Nacos as a registry.
+- **Graph Core**: Underlying engine for stateful agents with in-memory and file persistence; JDBC, MongoDB, and Redis savers live in the Extensions repository.
+- **A2A (Agent-to-Agent)**: Enables agents to call remote agents through agent cards; Nacos discovery lives in the Extensions repository.
 - **Studio**: Provides embedded visual tools for debugging agent workflows.
 
 ### Technology Stack
 
 - **Framework**: Java 17; Spring Boot 4.1.x for optional starters and Studio
-- **Model and Integration Layer**: `argi-api` contracts and four isolated provider adapters; MCP and A2A integrations
+- **Model and Integration Layer**: `argi-api` contracts and three isolated provider adapters; MCP and A2A integrations
 - **Observability**: Lightweight Micrometer observation; no required OpenTelemetry deployment
 
 Core production sources, bytecode, and runtime dependency trees must remain free of provider SDKs. Native SDKs in core test fixtures must use test scope. This is a breaking replacement, not a deprecated compatibility bridge.

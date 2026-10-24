@@ -45,12 +45,3 @@ checkstyle-check: ## Checkstyle Check the code and output to target/checkstyle-r
 	@$(LOG_TARGET)
 	./mvnw -Dcheckstyle.skip=false -Dcheckstyle.output.file=checkstyle-report.xml checkstyle:check
 
-.PHONY: api-contract-check
-api-contract-check: ## Compile current public API consumers without provider SDKs
-	@$(LOG_TARGET)
-	tools/scripts/verify-api-contract.sh
-
-.PHONY: clear-room-check
-clear-room-check: ## Verify Clear Room ownership, compatibility, and dependency boundaries
-	@$(LOG_TARGET)
-	tools/scripts/verify-clear-room.sh

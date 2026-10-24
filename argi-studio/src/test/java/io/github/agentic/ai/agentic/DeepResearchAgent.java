@@ -97,7 +97,7 @@ public class DeepResearchAgent {
 		this.patchToolCallsInterceptor = PatchToolCallsInterceptor.builder().build();
 
 		this.toolRetryInterceptor = ToolRetryInterceptor.builder()
-			.maxRetries(1)
+			.maxAttempts(2)
 			.onFailure(ToolRetryInterceptor.OnFailureBehavior.RETURN_MESSAGE)
 			.build();
 

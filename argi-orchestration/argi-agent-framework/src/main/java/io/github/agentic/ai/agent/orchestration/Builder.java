@@ -29,7 +29,7 @@ import io.github.agentic.ai.workflow.graph.CompileConfig;
 import io.github.agentic.ai.workflow.graph.KeyStrategy;
 import io.github.agentic.ai.agent.orchestration.hook.Hook;
 import io.github.agentic.ai.agent.interceptor.Interceptor;
-import io.github.agentic.ai.agent.interceptor.BusinessOutcomeMapperRegistry;
+import io.github.agentic.ai.agent.outcome.BusinessOutcomeMapperRegistry;
 import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
 import io.github.agentic.ai.agent.orchestration.interceptor.StreamingModelInterceptor;
 import io.github.agentic.ai.agent.orchestration.interceptor.ToolInterceptor;

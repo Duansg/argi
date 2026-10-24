@@ -300,7 +300,13 @@ public final class RunnableConfig implements HasMetadata<RunnableConfig.Builder>
 		return ofNullable(interruptedNodes).map(m -> m.get(key));
 	}
 
-	// FIXME, allow modification or not?
+	/**
+	 * Return the live metadata map of this config. The map is intentionally mutable:
+	 * {@code HasMetadata.getMetadataAndRemove(String, TypeRef)} consumes one-shot entries
+	 * such as resume feedback in place. Callers that only read metadata should use
+	 * {@link #metadata(String)}.
+	 * @return the mutable metadata map
+	 */
 	@Override
 	public Optional<Map<String, Object>> metadata() {
 		return Optional.of(metadata);

@@ -28,7 +28,7 @@ ARGI 是 **Agent Runtime and Graph Intelligence** 的缩写，读作 **“AR-jee
 - **上下文工程**：支持上下文压缩与编辑、调用限制、工具重试、规划和动态工具选择。
 - **图工作流**：支持条件路由、并行执行、嵌套图、状态持久化和中断恢复。
 - **智能体运行时基础**：提供模型无关的智能体编排、工作流状态和可嵌入调试支持。
-- **开放集成**：通过中立 ChatClient 接入 Spring AI、LangChain4j、Google ADK 和 AgentScope，并提供工具调用、MCP、A2A 和 Nacos。
+- **开放集成**：通过中立 ChatClient 接入 Spring AI、LangChain4j 和 Google ADK，并提供工具调用、MCP、A2A 和 Nacos。
 - **可视化调试**：提供可嵌入 Spring Boot 应用的 Agent Chat UI。
 
 ## 快速开始
@@ -57,7 +57,7 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 
 | 模块 | 说明 |
 | --- | --- |
-| [API 与 Adapter](argi-api) | 中立 ChatClient 契约及 Spring AI、LangChain4j、Google ADK、AgentScope 接入 |
+| [API 与 Adapter](argi-api) | 中立 ChatClient 契约及 Spring AI、LangChain4j、Google ADK 接入 |
 | [Runtime API](argi-runtime/argi-runtime-api) | JDK-only identity、definition 与 execution-control 契约 |
 | [Runtime Core](argi-runtime/argi-runtime-core) | 中立 Run/Task 数据、codec 与 reference storage |
 | [Agent API](argi-agent/argi-agent-api) | 引擎无关的 Agent invocation 与共享 interceptor 契约 |
@@ -67,7 +67,7 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 | [Workflow Core](argi-orchestration/argi-workflow-core) | 版本化声明式工作流定义与独立执行 |
 | [Studio](argi-studio) | Agent 可视化调试界面 |
 | [Sandbox](https://github.com/agentic-ai-java/argi-extensions/tree/main/sandbox/argi-sandbox) | 工具调用的可选隔离执行环境，由 Extensions 维护 |
-| [Spring Boot Starters](argi-spring-boot-starter) | 内置图节点、图可观测性与四个 Adapter 的自动配置 |
+| [Spring Boot Starters](argi-spring-boot-starter) | 内置图节点、图可观测性与三个 Adapter 的自动配置 |
 | [Extensions](https://github.com/agentic-ai-java/argi-extensions) | 模型与文档契约、A2A、Nacos、AgentScope、存储等可选扩展 |
 | [Examples](https://github.com/agentic-ai-java/argi-examples/tree/main/examples) | Chatbot、多智能体、图工程和文档示例 |
 | [Benchmark](benchmark) | [ARGI 基准测试项目](https://github.com/agentic-ai-java/argi-benchmark) |
@@ -78,9 +78,6 @@ mvn -f examples/chatbot/pom.xml spring-boot:run
 - [快速开始](https://agentic-ai-java.github.io/argi-website/docs/quick-start)
 - [Agent Framework 教程](https://agentic-ai-java.github.io/argi-website/docs/frameworks/agent-framework/tutorials/agents)
 - [Workflow Graph Core 快速开始](https://agentic-ai-java.github.io/argi-website/docs/frameworks/workflow-graph-core/quick-start)
-- [Clear Room 基线与命名决策](docs/architecture/clear-room-baseline.md)
-- [Checkpoint 兼容契约](docs/architecture/checkpoint-compatibility.md)
-- [Agent、Studio 与 serializer 边界](docs/architecture/api-boundaries.md)
 - [示例项目](https://github.com/agentic-ai-java/argi-examples/tree/main/examples)
 - [模型厂商相关示例](https://github.com/agentic-ai-java/argi-extensions/tree/main/examples)
 

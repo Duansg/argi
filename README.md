@@ -28,7 +28,7 @@ ARGI stands for **Agent Runtime and Graph Intelligence** and is pronounced **"AR
 - **Context engineering**: context compaction and editing, call limits, tool retries, planning, and dynamic tool selection.
 - **Graph workflows**: conditional routing, parallel execution, nested graphs, state persistence, and interruption recovery.
 - **Agent runtime foundation**: provider-neutral agent orchestration, workflow state, and embeddable debugging support.
-- **Open integrations**: a neutral ChatClient with Spring AI, LangChain4j, Google ADK, and AgentScope adapters, plus tool calling, MCP, A2A, and Nacos.
+- **Open integrations**: a neutral ChatClient with Spring AI, LangChain4j, and Google ADK adapters, plus tool calling, MCP, A2A, and Nacos.
 - **Visual debugging**: an embeddable Agent Chat UI for Spring Boot applications.
 
 ## Quick Start
@@ -57,7 +57,7 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 
 | Module | Description |
 | --- | --- |
-| [API and Adapters](argi-api) | Framework-neutral ChatClient contracts and Spring AI, LangChain4j, Google ADK, and AgentScope adapters |
+| [API and Adapters](argi-api) | Framework-neutral ChatClient contracts and Spring AI, LangChain4j, and Google ADK adapters |
 | [Agent Framework](argi-orchestration/argi-agent-framework) | Agent development and multi-agent orchestration |
 | [Workflow Graph Core](argi-orchestration/argi-workflow-graph-core) | Stateful graph execution, persistence, and workflow runtime |
 | [Runtime API](argi-runtime/argi-runtime-api) | JDK-only identity, definition and execution-control contracts |
@@ -67,7 +67,7 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 | [Runtime Core](argi-runtime/argi-runtime-core) | Engine-neutral Run/Task data, codecs and reference storage |
 | [Studio](argi-studio) | Visual debugging UI for agents |
 | [Sandbox](https://github.com/agentic-ai-java/argi-extensions/tree/main/sandbox/argi-sandbox) | Optional isolated execution environment for tool calls, maintained in Extensions |
-| [Spring Boot Starters](argi-spring-boot-starter) | Built-in graph nodes, graph observability, and four adapter auto-configurations |
+| [Spring Boot Starters](argi-spring-boot-starter) | Built-in graph nodes, graph observability, and three adapter auto-configurations |
 | [Extensions](https://github.com/agentic-ai-java/argi-extensions) | Model and document contracts, A2A, Nacos, AgentScope, storage, and other optional integrations |
 | [Examples](https://github.com/agentic-ai-java/argi-examples/tree/main/examples) | Chatbot, multi-agent, graph engineering, and documentation examples |
 | [Benchmark](benchmark) | [argi-benchmark](https://github.com/agentic-ai-java/argi-benchmark) |
@@ -78,9 +78,6 @@ Open [http://localhost:8080/chatui/index.html](http://localhost:8080/chatui/inde
 - [Quick Start](https://agentic-ai-java.github.io/argi-website/en/docs/quick-start)
 - [Agent Framework tutorials](https://agentic-ai-java.github.io/argi-website/en/docs/frameworks/agent-framework/tutorials/agents)
 - [Workflow Graph Core Quick Start](https://agentic-ai-java.github.io/argi-website/en/docs/frameworks/workflow-graph-core/quick-start)
-- [Clear Room baseline](docs/architecture/clear-room-baseline.md)
-- [Checkpoint compatibility contract](docs/architecture/checkpoint-compatibility.md)
-- [Agent, Studio, and serializer boundaries](docs/architecture/api-boundaries.md)
 - [Examples](https://github.com/agentic-ai-java/argi-examples/tree/main/examples)
 - [Provider-specific examples](https://github.com/agentic-ai-java/argi-extensions/tree/main/examples)
 

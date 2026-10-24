@@ -22,20 +22,20 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * @author yHong
  * @version 1.0
  * @since 2025/7/23 10:52
  */
-public class AssignerNodeTest {
+class AssignerNodeTest {
 
 	@Test
-	public void testBatchOverWrite() {
+	void testBatchOverWrite() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("a", new ReplaceStrategy());
 		state.registerKeyAndStrategy("b", new ReplaceStrategy());
@@ -55,7 +55,7 @@ public class AssignerNodeTest {
 	}
 
 	@Test
-	public void testBatchAppend() {
+	void testBatchAppend() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("a", new ReplaceStrategy());
 		state.registerKeyAndStrategy("b", new ReplaceStrategy());
@@ -78,7 +78,7 @@ public class AssignerNodeTest {
 	}
 
 	@Test
-	public void testBatchClear() {
+	void testBatchClear() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("x", new ReplaceStrategy());
 		state.registerKeyAndStrategy("y", new ReplaceStrategy());
@@ -98,7 +98,7 @@ public class AssignerNodeTest {
 	}
 
 	@Test
-	public void testBatchInputConstant() {
+	void testBatchInputConstant() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("x", new ReplaceStrategy());
 		state.registerKeyAndStrategy("y", new ReplaceStrategy());
@@ -114,7 +114,7 @@ public class AssignerNodeTest {
 	}
 
 	@Test
-	public void testMixBatch() {
+	void testMixBatch() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("a", new ReplaceStrategy());
 		state.registerKeyAndStrategy("b", new ReplaceStrategy());
@@ -141,7 +141,7 @@ public class AssignerNodeTest {
 	}
 
 	@Test
-	public void testCompatibleSingleVariable() {
+	void testCompatibleSingleVariable() {
 		OverAllState state = new OverAllState();
 		state.registerKeyAndStrategy("input", new ReplaceStrategy());
 		state.updateState(Map.of("input", "single"));

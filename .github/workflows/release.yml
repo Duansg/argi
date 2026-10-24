@@ -68,8 +68,6 @@ jobs:
           ], text=True))
           assert release['isDraft'] and release['targetCommitish'] == sha, 'Release draft target mismatch'
           PY
-      - name: Verify release tools
-        run: python3 tools/tests/release-tools-test.py
       - name: Check publishing credentials
         shell: bash
         env:

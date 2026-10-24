@@ -19,14 +19,12 @@ import io.github.agentic.ai.workflow.graph.GraphResponse;
 import io.github.agentic.ai.workflow.graph.NodeOutput;
 import io.github.agentic.ai.workflow.graph.OverAllState;
 import io.github.agentic.ai.workflow.graph.RunnableConfig;
-import io.github.agentic.ai.workflow.graph.async.AsyncGenerator;
 import io.github.agentic.ai.workflow.graph.streaming.OutputType;
 import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
 
 import io.github.agentic.ai.api.chat.ChatMessage;
 import io.github.agentic.ai.api.chat.ChatSourceKind;
 import io.github.agentic.ai.api.chat.ChatTrustLevel;
-import io.github.agentic.ai.api.chat.Usage;
 
 import io.a2a.spec.AgentCard;
 import org.junit.jupiter.api.Test;
@@ -43,7 +41,6 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -62,100 +59,149 @@ import static org.mockito.Mockito.when;
 
 class A2aNodeActionWithConfigTests {
 
-	private static final Method TO_FLUX = initToFluxMethod();
-
 	private final A2aNodeActionWithConfig action = new A2aNodeActionWithConfig(createAgentCardWrapper(), "", false,
 			"messages", "instruction", true);
 
 	@Test
-	void toFluxEmitsAsyncData() throws Exception {
-		AsyncGenerator<NodeOutput> generator = new AsyncGenerator<>() {
-			private final AtomicInteger index = new AtomicInteger();
+	void streamingEmitsEventStreamChunksAndAccumulatedResult() throws Exception {
+		HttpServer server = startServer(200, "text/event-stream", """
+				data: {"jsonrpc":"2.0","id":"1","result":{"kind":"artifact-update","artifact":{"parts":[{"text":"hello "}]}}}
 
-			@Override
-			public Data<NodeOutput> next() {
-				int step = index.getAndIncrement();
-				if (step == 0) {
-					// Use completedFuture to avoid timing issues with async execution
-					return Data.of(CompletableFuture
-						.completedFuture(NodeOutput.of("node-1", "", new OverAllState(), Usage.unknown())));
-				}
-				if (step == 1) {
-					return Data.done(Map.of("result", "ok"));
-				}
-				return Data.done();
-			}
-		};
+				data: {"jsonrpc":"2.0","id":"1","result":{"kind":"artifact-update","artifact":{"parts":[{"text":"world"}]}}}
 
-		Flux<GraphResponse<NodeOutput>> flux = invokeToFlux(generator);
+				data: [DONE]
+				""");
+		try {
+			List<GraphResponse<NodeOutput>> responses = stream(baseUrl(server));
 
-		List<GraphResponse<NodeOutput>> responses = flux.collectList().block(Duration.ofSeconds(5));
+			assertEquals(3, responses.size());
+			assertEquals("hello ", streamingText(responses.get(0)));
+			assertEquals("world", streamingText(responses.get(1)));
+			GraphResponse<NodeOutput> terminal = responses.get(2);
+			assertTrue(terminal.isDone());
+			assertEquals("hello world", ((Map<?, ?>) terminal.resultValue().orElseThrow()).get("reply"));
+		}
+		finally {
+			server.stop(0);
+		}
+	}
 
-		assertNotNull(responses);
+	@Test
+	void streamingReportsHttpFailureAndStillCompletes() throws Exception {
+		HttpServer server = startServer(500, "application/json", "{}");
+		try {
+			List<GraphResponse<NodeOutput>> responses = stream(baseUrl(server));
+
+			assertEquals(2, responses.size());
+			assertEquals("HTTP request failed, status: 500", streamingText(responses.get(0)));
+			assertTrue(responses.get(1).isDone());
+			assertEquals("", ((Map<?, ?>) responses.get(1).resultValue().orElseThrow()).get("reply"));
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void streamingWithoutAgentUrlCompletesInsteadOfWaitingForever() throws Exception {
+		List<GraphResponse<NodeOutput>> responses = stream(null);
+
 		assertEquals(2, responses.size());
-
-		GraphResponse<NodeOutput> first = responses.get(0);
-		assertFalse(first.isDone());
-		NodeOutput output = first.getOutput().getNow(null);
-		assertNotNull(output);
-		assertEquals("node-1", output.node());
-
-		GraphResponse<NodeOutput> second = responses.get(1);
-		assertTrue(second.isDone());
-		Map<?, ?> resultValue = (Map<?, ?>) second.resultValue().orElseThrow();
-		assertEquals("ok", resultValue.get("result"));
+		assertEquals("Error: AgentCard.url is empty", streamingText(responses.get(0)));
+		assertTrue(responses.get(1).isDone());
 	}
 
 	@Test
-	void toFluxDrainsCompletedFuturesWithoutRecursiveStackGrowth() throws Exception {
-		int count = 20_000;
-		AsyncGenerator<NodeOutput> generator = new AsyncGenerator<>() {
-			private final AtomicInteger index = new AtomicInteger();
+	void streamingDoesNotContactServerBeforeSubscription() throws Exception {
+		AtomicInteger requests = new AtomicInteger();
+		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			requests.incrementAndGet();
+			exchange.sendResponseHeaders(500, -1);
+			exchange.close();
+		});
+		server.start();
+		try {
+			A2aNodeActionWithConfig node = new A2aNodeActionWithConfig(createAgentCardWrapper(baseUrl(server)),
+					"remote-agent", false, "reply", "instruction", true);
+			node.apply(new OverAllState(), RunnableConfig.builder().threadId("lazy").build());
 
-			@Override
-			public Data<NodeOutput> next() {
-				int step = index.getAndIncrement();
-				if (step < count) {
-					return Data.of(NodeOutput.of("node-" + step, "", new OverAllState(), Usage.unknown()));
-				}
-				return Data.done(Map.of("result", "ok"));
-			}
-		};
+			assertEquals(0, requests.get());
+		}
+		finally {
+			server.stop(0);
+		}
+	}
 
-		Flux<GraphResponse<NodeOutput>> flux = invokeToFlux(generator);
+	@Test
+	void forwardsUserIdFromConfiguredMetadataKey() throws Exception {
+		ObjectMapper json = new ObjectMapper();
+		AtomicReference<JsonNode> captured = new AtomicReference<>();
+		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			captured.set(json.readTree(exchange.getRequestBody()));
+			byte[] bytes = """
+					{"jsonrpc":"2.0","id":"1","result":{"kind":"artifact-update","artifact":{"parts":[{"text":"ok"}]}}}
+					""".getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().add("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, bytes.length);
+			exchange.getResponseBody().write(bytes);
+			exchange.close();
+		});
+		server.start();
+		try {
+			A2aNodeActionWithConfig node = new A2aNodeActionWithConfig(createAgentCardWrapper(baseUrl(server)),
+					"remote-agent", false, "reply", "instruction", false)
+				.userIdMetadataKey("tenantUser");
+			RunnableConfig config = RunnableConfig.builder()
+				.threadId("user-key")
+				.addMetadata("tenantUser", "u-42")
+				.addMetadata("userId", "ignored")
+				.build();
 
+			node.apply(new OverAllState(), config);
+
+			assertEquals("u-42", captured.get().at("/params/metadata/userId").asText());
+			assertThrows(IllegalArgumentException.class, () -> node.userIdMetadataKey(" "));
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@SuppressWarnings("unchecked")
+	private static List<GraphResponse<NodeOutput>> stream(String baseUrl) throws Exception {
+		A2aNodeActionWithConfig node = new A2aNodeActionWithConfig(createAgentCardWrapper(baseUrl), "remote-agent",
+				false, "reply", "instruction", true);
+		Map<String, Object> result = node.apply(new OverAllState(),
+				RunnableConfig.builder().threadId("stream-test").build());
+		Flux<GraphResponse<NodeOutput>> flux = (Flux<GraphResponse<NodeOutput>>) result.get("reply");
 		List<GraphResponse<NodeOutput>> responses = flux.collectList().block(Duration.ofSeconds(5));
-
 		assertNotNull(responses);
-		assertEquals(count + 1, responses.size());
-		assertEquals("node-0", responses.get(0).getOutput().getNow(null).node());
-		assertEquals("node-" + (count - 1), responses.get(count - 1).getOutput().getNow(null).node());
-		assertTrue(responses.get(count).isDone());
+		return responses;
 	}
 
-	@Test
-	void toFluxPropagatesErrors() throws Exception {
-		AsyncGenerator<NodeOutput> generator = new AsyncGenerator<>() {
-			private final AtomicInteger index = new AtomicInteger();
+	private static String streamingText(GraphResponse<NodeOutput> response) {
+		assertFalse(response.isDone());
+		StreamingOutput<?> output = assertInstanceOf(StreamingOutput.class, response.getOutput().getNow(null));
+		return output.text();
+	}
 
-			@Override
-			public Data<NodeOutput> next() {
-				int step = index.getAndIncrement();
-				if (step == 0) {
-					// Use a completed exceptionally future to avoid timing issues
-					CompletableFuture<NodeOutput> failedFuture = new CompletableFuture<>();
-					failedFuture.completeExceptionally(new IllegalStateException("boom"));
-					return Data.of(failedFuture);
-				}
-				return Data.done();
-			}
-		};
+	private static HttpServer startServer(int status, String contentType, String body) throws Exception {
+		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().add("Content-Type", contentType);
+			exchange.sendResponseHeaders(status, bytes.length);
+			exchange.getResponseBody().write(bytes);
+			exchange.close();
+		});
+		server.start();
+		return server;
+	}
 
-		Flux<GraphResponse<NodeOutput>> flux = invokeToFlux(generator);
-
-		IllegalStateException exception = assertThrows(IllegalStateException.class,
-				() -> flux.collectList().block(Duration.ofSeconds(5)));
-		assertEquals("boom", exception.getMessage());
+	private static String baseUrl(HttpServer server) {
+		return "http://127.0.0.1:" + server.getAddress().getPort() + "/";
 	}
 
 	@Test
@@ -248,22 +294,6 @@ class A2aNodeActionWithConfigTests {
 		}
 		finally {
 			server.stop(0);
-		}
-	}
-
-	@SuppressWarnings("unchecked")
-	private Flux<GraphResponse<NodeOutput>> invokeToFlux(AsyncGenerator<NodeOutput> generator) throws Exception {
-		return (Flux<GraphResponse<NodeOutput>>) TO_FLUX.invoke(this.action, generator);
-	}
-
-	private static Method initToFluxMethod() {
-		try {
-			Method method = A2aNodeActionWithConfig.class.getDeclaredMethod("toFlux", AsyncGenerator.class);
-			method.setAccessible(true);
-			return method;
-		}
-		catch (NoSuchMethodException ex) {
-			throw new IllegalStateException(ex);
 		}
 	}
 

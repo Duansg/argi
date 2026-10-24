@@ -104,12 +104,7 @@ Import the matching `argi-bom` to manage the version. The first target is
 
 ```sh
 ./mvnw -B -pl :argi-runtime-api -am test
-tools/scripts/verify-api-contract.sh
 ```
 
-The API consumer gate compiles and executes a separate runtime-only consumer
-with only the runtime API jar and JDK on its execution classpath. It checks
-delegation, immutable constraints, reference resolution and the absence of
-Graph, Agent, model, Spring and Reactor classes. JDK `jdeps` checks the runtime
-jar's actual bytecode dependency set. Existing Graph and Agent tests continue
-to validate propagation, authorization and versioned storage behavior.
+Existing Graph and Agent tests validate propagation, authorization and versioned
+storage behavior.

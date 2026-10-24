@@ -28,6 +28,9 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Tool interceptor that automatically evicts large tool results to the filesystem.
  *
@@ -51,6 +54,8 @@ import java.util.Set;
  * </pre>
  */
 public class LargeResultEvictionInterceptor extends ToolInterceptor {
+
+	private static final Logger log = LoggerFactory.getLogger(LargeResultEvictionInterceptor.class);
 
 	// Constants from Python implementation
 	private static final int MAX_LINE_LENGTH = 2000;
@@ -151,10 +156,10 @@ public class LargeResultEvictionInterceptor extends ToolInterceptor {
 			WriteResult writeResult = backend.write(filePath, content);
 			if (writeResult.getError() != null) {
 				// Log warning but continue with eviction message
-				System.err.println("Warning: Failed to write large result to filesystem: " + writeResult.getError());
+				log.warn("Failed to write large result to filesystem: {}", writeResult.getError());
 			}
 		} else {
-			System.err.println("Warning: Backend not configured, large result not persisted to filesystem");
+			log.warn("Backend not configured, large result not persisted to filesystem");
 		}
 
 		// Extract first N lines as sample

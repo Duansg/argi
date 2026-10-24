@@ -24,8 +24,6 @@ import io.github.agentic.ai.workflow.graph.NodeOutput;
 import io.github.agentic.ai.workflow.graph.OverAllState;
 import io.github.agentic.ai.workflow.graph.RunnableConfig;
 import io.github.agentic.ai.workflow.graph.action.NodeActionWithConfig;
-import io.github.agentic.ai.workflow.graph.async.AsyncGenerator;
-import io.github.agentic.ai.workflow.graph.async.AsyncGeneratorQueue;
 import io.github.agentic.ai.workflow.graph.streaming.OutputType;
 import io.github.agentic.ai.workflow.graph.streaming.StreamingOutput;
 
@@ -51,12 +49,9 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import reactor.core.Disposable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
@@ -64,6 +59,9 @@ import reactor.core.scheduler.Schedulers;
 import static java.lang.String.format;
 
 public class A2aNodeActionWithConfig implements NodeActionWithConfig {
+
+	/** Default {@link RunnableConfig} metadata key holding the caller's user id. */
+	public static final String DEFAULT_USER_ID_METADATA_KEY = "userId";
 
 	private final String agentName;
 
@@ -84,6 +82,8 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 	private CompileConfig parentCompileConfig;
 
 	private AgentTracer agentTracer;
+
+	private String userIdMetadataKey = DEFAULT_USER_ID_METADATA_KEY;
 
 	public A2aNodeActionWithConfig(AgentCardWrapper agentCard, String agentName, boolean includeContents,
 			String outputKeyToParent, String instruction, boolean streaming) {
@@ -142,6 +142,21 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 		this.agentTracer = agentTracer;
 	}
 
+	/**
+	 * Select the {@link RunnableConfig} metadata key whose value is forwarded to the remote
+	 * agent as the A2A {@code userId} metadata field.
+	 * @param userIdMetadataKey the metadata key, defaults to
+	 * {@link #DEFAULT_USER_ID_METADATA_KEY}
+	 * @return this node action
+	 */
+	public A2aNodeActionWithConfig userIdMetadataKey(String userIdMetadataKey) {
+		if (!StringUtils.hasText(userIdMetadataKey)) {
+			throw new IllegalArgumentException("userIdMetadataKey must not be blank");
+		}
+		this.userIdMetadataKey = userIdMetadataKey;
+		return this;
+	}
+
 	@Override
 	public Map<String, Object> apply(OverAllState state, RunnableConfig config) throws Exception {
 		RunnableConfig subGraphRunnableConfig = getSubGraphRunnableConfig(config);
@@ -150,9 +165,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 			context = context.withDelegationId(UUID.randomUUID().toString());
 		}
 		if (streaming) {
-			AsyncGenerator<NodeOutput> generator = createStreamingGenerator(state, subGraphRunnableConfig, context);
-			// Convert AsyncGenerator to Flux using the new toFlux() method
-			Flux<GraphResponse<NodeOutput>> flux = toFlux(generator);
+			Flux<GraphResponse<NodeOutput>> flux = createStreamingFlux(state, subGraphRunnableConfig, context);
 			return Map.of(StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages", flux);
 		}
 		else {
@@ -217,105 +230,23 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 	}
 
 	/**
-	 * Converts this AsyncGenerator to a Project Reactor Flux. This method provides
-	 * forward compatibility for converting AsyncGenerator to reactive streams.
-	 * @return a Flux that emits the elements from this AsyncGenerator
+	 * Stream the remote agent response. The HTTP exchange starts on subscription and runs
+	 * on a bounded elastic worker. Each non-empty text chunk is emitted as a
+	 * {@link StreamingOutput}; transport and protocol failures are emitted as error text
+	 * chunks. The stream always ends with a done response carrying the accumulated text
+	 * for the parent state, unless the subscriber cancels first.
 	 */
-	private <E> Flux<GraphResponse<E>> toFlux(AsyncGenerator<E> generator) {
-		return Flux.create(sink -> {
-			Disposable disposable = Schedulers.boundedElastic().schedule(() -> drainGenerator(generator, sink));
-			sink.onCancel(disposable::dispose);
-			sink.onDispose(disposable::dispose);
-		});
-	}
-
-	private <E> void drainGenerator(AsyncGenerator<E> generator, FluxSink<GraphResponse<E>> sink) {
-		while (!sink.isCancelled()) {
-			final AsyncGenerator.Data<E> data;
-			try {
-				data = generator.next();
-			}
-			catch (Exception ex) {
-				sink.error(ex);
-				return;
-			}
-
-			if (data.isDone()) {
-				data.resultValue().ifPresent(result -> {
-					if (!sink.isCancelled()) {
-						sink.next(GraphResponse.done(result));
-					}
-				});
-				if (!sink.isCancelled()) {
-					sink.complete();
-				}
-				return;
-			}
-
-			var future = data.getData();
-			if (future == null) {
-				sink.error(new IllegalStateException("AsyncGenerator data is null without completion signal"));
-				return;
-			}
-
-			if (future.isDone()) {
-				try {
-					E value = future.join();
-					if (!sink.isCancelled()) {
-						sink.next(GraphResponse.of(value));
-					}
-				}
-				catch (Exception ex) {
-					sink.error(unwrapCompletionException(ex));
-					return;
-				}
-				continue;
-			}
-
-			future.whenComplete((value, throwable) -> {
-				if (sink.isCancelled()) {
-					return;
-				}
-
-				if (throwable != null) {
-					Throwable actual = unwrapCompletionException(throwable);
-					sink.error(actual);
-					return;
-				}
-
-				if (!sink.isCancelled()) {
-					sink.next(GraphResponse.of(value));
-				}
-
-				drainGenerator(generator, sink);
-			});
-			return;
-		}
-	}
-
-	private Throwable unwrapCompletionException(Throwable throwable) {
-		if (throwable instanceof java.util.concurrent.CompletionException completionException
-				&& completionException.getCause() != null) {
-			return completionException.getCause();
-		}
-		return throwable;
-	}
-
-	/**
-	 * Create a streaming generator.
-	 */
-	private AsyncGenerator<NodeOutput> createStreamingGenerator(OverAllState state, RunnableConfig config,
+	private Flux<GraphResponse<NodeOutput>> createStreamingFlux(OverAllState state, RunnableConfig config,
 			AgentTraceContext context) throws Exception {
 		final String requestPayload = buildSendStreamingMessageRequest(state, config, context);
-		final BlockingQueue<AsyncGenerator.Data<NodeOutput>> queue = new LinkedBlockingQueue<>(1000);
 		final String outputKey = StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages";
-		final StringBuilder accumulated = new StringBuilder();
 
-		return AsyncGeneratorQueue.of(queue, q -> {
+		return Flux.<GraphResponse<NodeOutput>>create(sink -> {
+			final StringBuilder accumulated = new StringBuilder();
 			String baseUrl = resolveAgentBaseUrl(this.agentCard);
 			if (baseUrl == null || baseUrl.isBlank()) {
-				StreamingOutput errorOutput = buildStreamingOutput("Error: AgentCard.url is empty", state);
-				queue.add(AsyncGenerator.Data.of(errorOutput));
+				emit(sink, buildStreamingOutput("Error: AgentCard.url is empty", state));
+				complete(sink, outputKey, accumulated);
 				return;
 			}
 
@@ -335,14 +266,14 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 						if (statusCode != 200) {
 							StreamingOutput errorOutput = buildStreamingOutput("HTTP request failed, status: "
 									+ statusCode, state);
-							queue.add(AsyncGenerator.Data.of(errorOutput));
+							emit(sink, errorOutput);
 							return null;
 						}
 
 						HttpEntity entity = response.getEntity();
 						if (entity == null) {
 							StreamingOutput errorOutput = buildStreamingOutput("Empty HTTP entity", state);
-							queue.add(AsyncGenerator.Data.of(errorOutput));
+							emit(sink, errorOutput);
 							return null;
 						}
 
@@ -356,7 +287,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 								try (BufferedReader reader = new BufferedReader(
 										new InputStreamReader(entity.getContent(), StandardCharsets.UTF_8))) {
 									String line;
-									while ((line = reader.readLine()) != null) {
+									while (!sink.isCancelled() && (line = reader.readLine()) != null) {
 										String trimmed = line.trim();
 										if (!trimmed.startsWith("data:")) {
 											continue;
@@ -372,7 +303,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 												String text = extractResponseText(result);
 												if (text != null && !text.isEmpty()) {
 													accumulated.append(text);
-													queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
+													emit(sink, buildStreamingOutput(text, state));
 												}
 											}
 										}
@@ -390,13 +321,12 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 									String text = extractResponseText(result);
 									if (text != null && !text.isEmpty()) {
 										accumulated.append(text);
-										queue.add(AsyncGenerator.Data.of(buildStreamingOutput(text, state)));
+										emit(sink, buildStreamingOutput(text, state));
 									}
 								}
 								catch (Exception ex) {
 									receiveSpan.error(ex);
-									queue.add(AsyncGenerator.Data
-										.of(buildStreamingOutput("Error: " + ex.getMessage(), state)));
+									emit(sink, buildStreamingOutput("Error: " + ex.getMessage(), state));
 								}
 							}
 							receiveSpan.success();
@@ -421,116 +351,25 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 				}
 			}
 			catch (Exception e) {
-				StreamingOutput errorOutput = buildStreamingOutput("Error: " + e.getMessage(), state);
-				queue.add(AsyncGenerator.Data.of(errorOutput));
+				emit(sink, buildStreamingOutput("Error: " + e.getMessage(), state));
 			}
 			finally {
-				queue.add(AsyncGenerator.Data.done(buildFinalResult(outputKey, accumulated.toString())));
+				complete(sink, outputKey, accumulated);
 			}
-		});
+		}).subscribeOn(Schedulers.boundedElastic());
 	}
 
-	/**
-	 * Check whether the given text looks like an SSE response.
-	 */
-	private boolean isSSEResponse(String responseText) {
-		return responseText.contains("data: ");
-	}
-
-	/**
-	 * Create a streaming generator for SSE-formatted text.
-	 */
-	private AsyncGenerator<NodeOutput> createSseStreamingGenerator(String sseResponseText, OverAllState state) {
-		// Use the new real-time streaming method
-		return createRealTimeSseStreamingGenerator(sseResponseText, state);
-	}
-
-	/**
-	 * Create a real-time SSE streaming generator (recommended). This method starts
-	 * processing SSE data immediately and pushes chunks as they arrive.
-	 */
-	private AsyncGenerator<NodeOutput> createRealTimeSseStreamingGenerator(String sseResponseText, OverAllState state) {
-		BlockingQueue<AsyncGenerator.Data<NodeOutput>> queue = new LinkedBlockingQueue<>(1000);
-		final String outputKey = StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages";
-		final StringBuilder accumulated = new StringBuilder();
-
-		// Start async processing immediately; do not wait for the entire content
-		return AsyncGeneratorQueue.of(queue, executor -> {
-			try {
-				// Process SSE response line by line to achieve true streaming
-				String[] lines = sseResponseText.split("\n");
-
-				for (String line : lines) {
-					line = line.trim();
-					if (line.startsWith("data: ")) {
-						try {
-							String jsonContent = line.substring(6); // remove "data: "
-							// prefix
-
-							// End marker
-							if ("[DONE]".equals(jsonContent)) {
-								break;
-							}
-
-							Map<String, Object> parsed = parseJsonMap(jsonContent);
-							Map<String, Object> result = (Map<String, Object>) parsed.get("result");
-
-							if (result != null) {
-								StreamingOutput streamingOutput = createStreamingOutputFromResult(result, state);
-								if (streamingOutput != null) {
-									queue.add(AsyncGenerator.Data.of(streamingOutput));
-								}
-							}
-						}
-						catch (Exception e) {
-							// Ignore parse errors and continue
-							continue;
-						}
-					}
-				}
-
-				// Signal completion with final result value
-				queue.add(AsyncGenerator.Data.done(buildFinalResult(outputKey, accumulated.toString())));
-
-			}
-			catch (Exception e) {
-				// On error, emit an error message and signal completion
-				StreamingOutput errorOutput = buildStreamingOutput("Error: " + e.getMessage(), state);
-				queue.add(AsyncGenerator.Data.of(errorOutput));
-				queue.add(AsyncGenerator.Data.done(buildFinalResult(outputKey, accumulated.toString())));
-			}
-		});
-	}
-
-	/**
-	 * Create a single-output streaming generator (for non-SSE responses).
-	 */
-	private AsyncGenerator<NodeOutput> createSingleStreamingGenerator(String responseText, OverAllState state) {
-		BlockingQueue<AsyncGenerator.Data<NodeOutput>> queue = new LinkedBlockingQueue<>(10);
-		final String outputKey = StringUtils.hasLength(this.outputKeyToParent) ? this.outputKeyToParent : "messages";
-		final StringBuilder accumulated = new StringBuilder();
-
-		try {
-			Map<String, Object> resultMap = parseJsonMap(responseText);
-			Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
-			String responseText2 = extractResponseText(result);
-
-			if (responseText2 != null && !responseText2.isEmpty()) {
-				accumulated.append(responseText2);
-				StreamingOutput streamingOutput = buildStreamingOutput(responseText2, state);
-				queue.add(AsyncGenerator.Data.of(streamingOutput));
-			}
+	private static void emit(FluxSink<GraphResponse<NodeOutput>> sink, NodeOutput output) {
+		if (!sink.isCancelled()) {
+			sink.next(GraphResponse.of(output));
 		}
-		catch (Exception e) {
-			// On parse failure, emit an error message
-			StreamingOutput errorOutput = buildStreamingOutput("Error: " + e.getMessage(), state);
-			queue.add(AsyncGenerator.Data.of(errorOutput));
+	}
+
+	private void complete(FluxSink<GraphResponse<NodeOutput>> sink, String outputKey, StringBuilder accumulated) {
+		if (!sink.isCancelled()) {
+			sink.next(GraphResponse.done(buildFinalResult(outputKey, accumulated.toString())));
+			sink.complete();
 		}
-
-		// Signal completion with final result value
-		queue.add(AsyncGenerator.Data.done(buildFinalResult(outputKey, accumulated.toString())));
-
-		return new AsyncGeneratorQueue.Generator<>(queue);
 	}
 
 	/**
@@ -557,51 +396,6 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 				? MessageProvenance.forChildHandoff(ChatMessage.assistant(text)) : text;
 		return Map.of(outputKey, value);
 	}
-
-	/**
-	 * Create a StreamingOutput from the parsed result map.
-	 */
-	private StreamingOutput createStreamingOutputFromResult(Map<String, Object> result, OverAllState state) {
-		String text = extractResponseText(result);
-		if (text != null && !text.isEmpty()) {
-			return buildStreamingOutput(text, state);
-		}
-		return null;
-	}
-
-	// /**
-	// * Get the streaming generator (similar to LlmNode.stream).
-	// */
-	// public Flux<NodeOutput> stream(OverAllState state) throws Exception {
-	// if (!this.streaming) {
-	// throw new IllegalStateException("Streaming is not enabled for this A2aNode");
-	// }
-	// AsyncGenerator<NodeOutput> generator = createStreamingGenerator(state);
-	// Flux<GraphResponse<NodeOutput>> graphResponseFlux = toFlux(generator);
-	//
-	// // Convert Flux<GraphResponse<NodeOutput>> to Flux<NodeOutput>
-	// return graphResponseFlux.filter(graphResponse -> !graphResponse.isDone()) // Filter
-	// out completion signals
-	// .map(graphResponse -> {
-	// try {
-	// return graphResponse.getOutput().join();
-	// }
-	// catch (Exception e) {
-	// throw new RuntimeException("Error extracting output from GraphResponse", e);
-	// }
-	// });
-	// }
-
-	// /**
-	// * Get the non-streaming result (similar to LlmNode.call).
-	// */
-	// public String call(OverAllState state) throws Exception {
-	// String requestPayload = buildSendMessageRequest(state, this.inputKeyFromParent);
-	// String resultText = sendMessageToServer(this.agentCard, requestPayload);
-	// Map<String, Object> resultMap = autoDetectAndParseResponse(resultText);
-	// Map<String, Object> result = (Map<String, Object>) resultMap.get("result");
-	// return extractResponseText(result);
-	// }
 
 	/**
 	 * Auto-detect response format and parse accordingly.
@@ -817,8 +611,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 
 		Map<String, Object> metadata = new HashMap<>();
 		config.threadId().ifPresent(threadId -> metadata.put("threadId", threadId));
-		// FIXME, the key 'userId' should be configurable
-		config.metadata("userId").ifPresent(userId -> metadata.put("userId", userId));
+		config.metadata(this.userIdMetadataKey).ifPresent(userId -> metadata.put("userId", userId));
 		putTraceMetadata(metadata, context);
 		params.put("metadata", metadata);
 
@@ -864,8 +657,7 @@ public class A2aNodeActionWithConfig implements NodeActionWithConfig {
 
 		Map<String, Object> metadata = new HashMap<>();
 		config.threadId().ifPresent(threadId -> metadata.put("threadId", threadId));
-		// FIXME, the key 'userId' should be configurable
-		config.metadata("userId").ifPresent(userId -> metadata.put("userId", userId));
+		config.metadata(this.userIdMetadataKey).ifPresent(userId -> metadata.put("userId", userId));
 		putTraceMetadata(metadata, context);
 		params.put("metadata", metadata);
 

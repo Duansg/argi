@@ -32,7 +32,6 @@ import io.github.agentic.ai.workflow.graph.internal.node.Node;
 import io.github.agentic.ai.workflow.graph.internal.node.SubCompiledGraphNode;
 import io.github.agentic.ai.workflow.graph.internal.node.SubStateGraphNode;
 import io.github.agentic.ai.workflow.graph.serializer.StateSerializer;
-import io.github.agentic.ai.workflow.graph.serializer.plain_text.PlainTextStateSerializer;
 import io.github.agentic.ai.workflow.graph.serializer.plain_text.jackson.ArgiJacksonStateSerializer;
 import io.github.agentic.ai.workflow.graph.state.AgentStateFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -110,32 +109,6 @@ public class StateGraph {
 	 */
 	public static final StateSerializer DEFAULT_JACKSON_SERIALIZER = new ArgiJacksonStateSerializer(OverAllState::new,
 			new ObjectMapper());
-
-	/**
-	 * Constructs a StateGraph with the specified name, key strategy factory, and state
-	 * serializer.
-	 * @param name the name of the graph
-	 * @param keyStrategyFactory the factory for providing key strategies
-	 * @param stateSerializer the plain text state serializer to use
-	 * @deprecated Use {@link #StateGraph(String, KeyStrategyFactory, StateSerializer)}
-	 * instead
-	 */
-	@Deprecated
-	public StateGraph(String name, KeyStrategyFactory keyStrategyFactory, PlainTextStateSerializer stateSerializer) {
-		this(name, keyStrategyFactory, (StateSerializer) stateSerializer);
-	}
-
-	/**
-	 * Constructs a StateGraph with the specified key strategy factory and plain text
-	 * state serializer.
-	 * @param keyStrategyFactory the factory for providing key strategies
-	 * @param stateSerializer the plain text state serializer to use
-	 * @deprecated Use {@link #StateGraph(KeyStrategyFactory, StateSerializer)} instead
-	 */
-	@Deprecated
-	public StateGraph(KeyStrategyFactory keyStrategyFactory, PlainTextStateSerializer stateSerializer) {
-		this(keyStrategyFactory, (StateSerializer) stateSerializer);
-	}
 
 	public StateGraph(String name, KeyStrategyFactory keyStrategyFactory) {
 		this(name, keyStrategyFactory, DEFAULT_JACKSON_SERIALIZER);

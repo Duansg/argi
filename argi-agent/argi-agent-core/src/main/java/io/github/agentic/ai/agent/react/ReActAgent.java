@@ -32,7 +32,7 @@ import io.github.agentic.ai.api.tool.ToolContext;
 import io.github.agentic.ai.api.tool.ToolRegistry;
 import io.github.agentic.ai.api.tool.ToolResult;
 import io.github.agentic.ai.agent.AgentResult;
-import io.github.agentic.ai.agent.interceptor.BusinessOutcomeMapperRegistry;
+import io.github.agentic.ai.agent.outcome.BusinessOutcomeMapperRegistry;
 import io.github.agentic.ai.agent.interceptor.ModelCallHandler;
 import io.github.agentic.ai.agent.interceptor.ModelInterceptor;
 import io.github.agentic.ai.agent.interceptor.ModelRequest;

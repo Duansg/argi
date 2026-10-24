@@ -11,12 +11,12 @@ rename.
 
 | Capability | Contract owner | Implementation owner | Core status | Compatibility evidence |
 | --- | --- | --- | --- | --- |
-| Checkpoint read/write/release | `argi-loop-core` `BaseCheckpointSaver` | Loop: `MemorySaver`, `FileSystemSaver`; Extensions: JDBC, MongoDB, Redis | External drivers removed from Loop | `checkpoint-compatibility.md`; backend fixtures in Extensions |
-| Versioned checkpoint CAS | `argi-loop-core` `VersionedCheckpointSaver` | Extensions Redis and future durable adapters | Contract remains in Loop | `VersionedCheckpointScope` and Redis CAS tests |
-| Execution leases | `argi-loop-core` `LeasedCheckpointSaver` | Extensions Redis | Contract remains in Loop | lease scope and Redis fencing tests |
-| General Store API | `argi-loop-core` `Store` / `VersionedStore` | Loop: `MemoryStore`, `FileSystemStore`; Extensions: durable stores | External stores removed from Loop | Store JSON fixtures and contract tests |
+| Checkpoint read/write/release | `argi-workflow-graph-core` `BaseCheckpointSaver` | Loop: `MemorySaver`, `FileSystemSaver`; Extensions: JDBC, MongoDB, Redis | External drivers removed from Loop | Checkpoint round-trip tests; backend fixtures in Extensions |
+| Versioned checkpoint CAS | `argi-workflow-graph-core` `VersionedCheckpointSaver` | Extensions Redis and future durable adapters | Contract remains in Loop | `VersionedCheckpointScope` and Redis CAS tests |
+| Execution leases | `argi-workflow-graph-core` `LeasedCheckpointSaver` | Extensions Redis | Contract remains in Loop | lease scope and Redis fencing tests |
+| General Store API | `argi-workflow-graph-core` `Store` / `VersionedStore` | Loop: `MemoryStore`, `FileSystemStore`; Extensions: durable stores | External stores removed from Loop | Store JSON fixtures and contract tests |
 | Run/Task persistence | `argi-runtime-core` `RunStore` | Extensions durable adapters | Never owned by Loop backend classes | Runtime contract and Redis RunStore tests |
-| State serialization | `argi-loop-core` serializer contracts | Loop serializer and backend adapters | Wire literals unchanged | `checkpoint-compatibility.md` |
+| State serialization | `argi-workflow-graph-core` serializer contracts | Loop serializer and backend adapters | Wire literals unchanged | Serializer fixture tests |
 | Database drivers and auto-configuration | No Core contract | Extensions persistence modules and starters | No provider driver in Loop runtime | POM dependency and module boundaries |
 
 The contract modules own interfaces, records, compatibility rules and in-memory
@@ -75,7 +75,7 @@ backend classes and drivers are delivered.
 5. For a rollback, pin the previous Core/Extensions pair. No checkpoint or
    Store data conversion is required.
 
-The Extensions persistence modules now compile against `argi-loop-core` at the
+The Extensions persistence modules now compile against `argi-workflow-graph-core` at the
 matching RC2 snapshot. Other Extensions modules that still consume the older
 graph coordinate remain outside this focused migration and are tracked by
 their own consumer tasks; they must not be silently changed as part of #190.
@@ -99,6 +99,6 @@ services must not be reported as a real-backend validation.
 
 ## Removal rule
 
-Adding a database client or durable backend implementation to `argi-loop-core`
+Adding a database client or durable backend implementation to `argi-workflow-graph-core`
 is a boundary violation. New persistence work belongs in an Extensions
 `graph-persistence` module and must add or reuse a contract test from Core.
