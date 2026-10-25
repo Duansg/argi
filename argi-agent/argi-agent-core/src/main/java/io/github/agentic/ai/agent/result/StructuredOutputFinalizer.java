@@ -18,6 +18,10 @@ package io.github.agentic.ai.agent.result;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import com.networknt.schema.Error;
@@ -34,6 +38,7 @@ import io.github.agentic.ai.api.chat.GenerationOptions;
 import io.github.agentic.ai.api.chat.ToolChoice;
 import io.github.agentic.ai.api.chat.Usage;
 import io.github.agentic.ai.agent.AgentResult;
+import io.github.agentic.ai.runtime.execution.ExecutionControl;
 import tools.jackson.core.StreamReadFeature;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
@@ -55,17 +60,29 @@ import tools.jackson.databind.json.JsonMapper;
  * </p>
  *
  * <p>
- * The component never throws: every failure mode (malformed JSON, malformed schema,
- * schema violations) becomes {@link AgentResult.Status#VALIDATION_FAILED} with issue
- * entries that do not echo the full output content.
+ * Validation never throws: every output failure mode (malformed JSON, malformed
+ * schema, schema violations) becomes {@link AgentResult.Status#VALIDATION_FAILED} with
+ * issue entries that do not echo the full output content.
  * </p>
  *
  * <p>
  * When constructed with a {@link ChatClient}, a failed validation gets exactly one
  * bounded repair attempt: a single-turn model re-ask that carries no tools (and never
  * touches the graph), after which the repaired output is re-validated without a second
- * repair. A failed repair is marked with {@link #ERROR_CODE_REPAIRED_STILL_INVALID};
- * a failing repair client leaves the original failure untouched.
+ * repair. A repair that still fails validation is marked with
+ * {@link AgentResult#ERROR_CODE_REPAIRED_STILL_INVALID}; a repair re-ask that cannot
+ * be performed is marked with {@link AgentResult#ERROR_CODE_REPAIR_CALL_FAILED} beside
+ * the original failure.
+ * </p>
+ *
+ * <p>
+ * Passing the run's {@link ExecutionControl} makes the repair re-ask execution-aware:
+ * a control that is already stopped (cancelled, past its deadline, ownership lost)
+ * skips the re-ask and propagates the stop instead of returning a validation failure,
+ * a stop raised while the re-ask is in flight cancels that call and propagates the
+ * stop reason, and a deadline that expires during the re-ask stops the delivery after
+ * it. Without a control, a cancelled or failing repair client degrades to the marked
+ * repair failure instead.
  * </p>
  */
 public final class StructuredOutputFinalizer {
@@ -105,6 +122,28 @@ public final class StructuredOutputFinalizer {
 	 * @return the delivery result; never {@code null} and never thrown over
 	 */
 	public AgentResult finalizeOutput(ChatMessage terminal, String outputSchema, Usage usage) {
+		return finalizeOutput(terminal, outputSchema, usage, null);
+	}
+
+	/**
+	 * Finalizes the terminal message of a run against the configured output schema under
+	 * the run's execution control. The control governs the optional repair re-ask: a
+	 * control that is already stopped (cancelled, past its deadline, ownership lost)
+	 * skips the re-ask and propagates the stop instead of returning a validation
+	 * failure, a stop raised while the re-ask is in flight cancels that call and
+	 * propagates the stop reason, and a deadline that expires during the re-ask stops
+	 * the delivery after it. Validation failures themselves are never thrown. Without a
+	 * control, a cancelled or failing repair client degrades to a marked repair failure
+	 * instead.
+	 * @param terminal the terminal assistant message; must not be {@code null}
+	 * @param outputSchema the configured JSON Schema for the output, or {@code null} or
+	 * blank when the run has none
+	 * @param usage the token usage recorded for the run, or {@code null} when unknown
+	 * @param control the run's execution control, or {@code null} to keep the
+	 * uncontrolled legacy behavior
+	 * @return the delivery result; never {@code null} and never thrown over
+	 */
+	public AgentResult finalizeOutput(ChatMessage terminal, String outputSchema, Usage usage, ExecutionControl control) {
 		if (outputSchema == null || outputSchema.isEmpty()) {
 			return AgentResult.completed(terminal, usage, null);
 		}
@@ -123,11 +162,25 @@ public final class StructuredOutputFinalizer {
 		if (first.status() != AgentResult.Status.VALIDATION_FAILED || this.repairClient == null) {
 			return first;
 		}
-
-		ChatMessage repaired = attemptRepair(terminal, outputSchema, first.issues());
+		if (control != null) {
+			// A stopped run must not spend another model call: cancelled, deadline
+			// exceeded and ownership lost all propagate as execution stops.
+			control.assertActive();
+		}
+		ChatMessage repaired = attemptRepair(terminal, outputSchema, first.issues(), control);
 		if (repaired == null) {
-			// The repair client failed: keep the original failure untouched.
-			return first;
+			// The repair re-ask could not be performed: keep the original failure and
+			// mark the distinction from a repair that ran but stayed invalid.
+			List<AgentResult.OutputValidationIssue> marked = new ArrayList<>();
+			marked.add(new AgentResult.OutputValidationIssue(AgentResult.ERROR_CODE_REPAIR_CALL_FAILED, ROOT_PATH,
+					"The bounded repair re-ask could not be performed or returned no assistant message"));
+			marked.addAll(first.issues());
+			return AgentResult.validationFailed(first.message(), first.usage(), List.copyOf(marked));
+		}
+		if (control != null) {
+			// Deadline checks are synchronous: a deadline that expired during the
+			// re-ask stops the delivery here instead of publishing a late output.
+			control.assertActive();
 		}
 		AgentResult second = validateAgainst(repaired, schema, usage);
 		if (second.status() != AgentResult.Status.VALIDATION_FAILED) {
@@ -169,7 +222,7 @@ public final class StructuredOutputFinalizer {
 	 * assistant message, or {@code null} when the repair client itself failed.
 	 */
 	private ChatMessage attemptRepair(ChatMessage terminal, String outputSchema,
-			List<AgentResult.OutputValidationIssue> issues) {
+			List<AgentResult.OutputValidationIssue> issues, ExecutionControl control) {
 		try {
 			String issueSummary = issues.stream()
 				.map(issue -> issue.errorCode()
@@ -181,16 +234,72 @@ public final class StructuredOutputFinalizer {
 						+ outputSchema);
 			ChatMessage user = ChatMessage.user("The previous response failed schema validation (" + issueSummary
 					+ "). Return the corrected JSON only.\nPrevious response:\n" + terminal.text());
-			ChatResponse response = this.repairClient.callBlocking(new ChatRequest(List.of(system, user), List.of(),
-					GenerationOptions.builder().toolChoice(ToolChoice.none()).build(), Map.of()));
+			ChatRequest request = new ChatRequest(List.of(system, user), List.of(),
+					GenerationOptions.builder().toolChoice(ToolChoice.none()).build(), Map.of());
+			ChatResponse response = control == null ? this.repairClient.callBlocking(request)
+					: callUnderControl(request, control);
 			return response.messages().stream()
 				.filter(message -> message.role() == ChatRole.ASSISTANT)
 				.findFirst()
 				.orElse(null);
 		}
+		catch (CancellationException cancelled) {
+			if (control == null) {
+				// The uncontrolled path has no stop semantics to preserve.
+				return null;
+			}
+			// Propagate the control's stop reason when the cancellation came from it;
+			// a cancellation raised by the client itself stays a cancellation.
+			control.assertActive();
+			throw cancelled;
+		}
 		catch (RuntimeException ex) {
 			return null;
 		}
+	}
+
+	/**
+	 * Performs the repair re-ask bound to the run's control: a stop raised while the
+	 * call is in flight cancels the pending call, and the cancellation observed while
+	 * waiting is translated back into the control's stop reason by the caller.
+	 */
+	private ChatResponse callUnderControl(ChatRequest request, ExecutionControl control) {
+		CompletableFuture<ChatResponse> pending = this.repairClient.call(request).toCompletableFuture();
+		AtomicReference<Throwable> failure = new AtomicReference<>();
+		pending.whenComplete((response, error) -> {
+			if (error != null) {
+				failure.set(error);
+			}
+		});
+		try (AutoCloseable ignored = control.onLoss(() -> pending.cancel(true))) {
+			return pending.get();
+		}
+		catch (InterruptedException interrupted) {
+			pending.cancel(true);
+			Thread.currentThread().interrupt();
+			throw new CancellationException("Model repair call interrupted");
+		}
+		catch (CancellationException cancelled) {
+			if (failure.get() instanceof CancellationException original) {
+				throw original;
+			}
+			throw cancelled;
+		}
+		catch (Exception error) {
+			// onLoss detachment cannot fail; everything else reaching here is the
+			// awaited call failure, unwrapped from its ExecutionException carrier.
+			throw repairFailure(error instanceof ExecutionException execution ? execution.getCause() : error);
+		}
+	}
+
+	private static RuntimeException repairFailure(Throwable error) {
+		if (error instanceof RuntimeException runtime) {
+			return runtime;
+		}
+		if (error instanceof java.lang.Error fatal) {
+			throw fatal;
+		}
+		return new IllegalStateException("Model repair call failed", error);
 	}
 
 }

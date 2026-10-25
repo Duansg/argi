@@ -159,7 +159,7 @@ class StructuredOutputFinalizerTest {
 	}
 
 	@Test
-	@DisplayName("a failing repair client keeps the original validation failure")
+	@DisplayName("a failing repair client is marked and keeps the original validation failure")
 	void repairClientFailureKeepsOriginalFailure() {
 		RepairStub client = new RepairStub(null, new IllegalStateException("repair backend down"));
 		StructuredOutputFinalizer repairing = new StructuredOutputFinalizer(client);
@@ -167,8 +167,9 @@ class StructuredOutputFinalizerTest {
 		AgentResult result = repairing.finalizeOutput(ChatMessage.assistant("not json"), SCHEMA, Usage.unknown());
 
 		assertThat(result.status()).isEqualTo(AgentResult.Status.VALIDATION_FAILED);
-		assertThat(result.issues()).hasSize(1);
-		assertThat(result.issues().get(0).errorCode()).isEqualTo(AgentResult.ERROR_CODE_INVALID_JSON);
+		assertThat(result.issues()).hasSize(2);
+		assertThat(result.issues().get(0).errorCode()).isEqualTo(AgentResult.ERROR_CODE_REPAIR_CALL_FAILED);
+		assertThat(result.issues().get(1).errorCode()).isEqualTo(AgentResult.ERROR_CODE_INVALID_JSON);
 		assertThat(client.calls.get()).isEqualTo(1);
 	}
 
