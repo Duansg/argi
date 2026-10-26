@@ -465,6 +465,9 @@ class GoogleAdkChatClientAdapterTests {
 		return (com.anthropic.client.AnthropicClient) Proxy.newProxyInstance(
 				GoogleAdkChatClientAdapterTests.class.getClassLoader(),
 				new Class<?>[] { com.anthropic.client.AnthropicClient.class }, (proxy, method, args) -> {
+					if (method.getName().equals("withOptions")) {
+						return proxy;
+					}
 					throw new AssertionError("Claude transport must not be invoked for unsupported requests");
 				});
 	}

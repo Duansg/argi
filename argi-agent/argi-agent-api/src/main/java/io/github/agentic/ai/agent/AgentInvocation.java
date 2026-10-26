@@ -20,6 +20,8 @@ import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 import io.github.agentic.ai.runtime.execution.ExecutionStoppedException;
@@ -205,6 +207,21 @@ final class AgentInvocation implements Flow.Subscriber<AgentEvent> {
 		public AgentOutcome get() throws InterruptedException, ExecutionException {
 			try {
 				return super.get();
+			}
+			catch (CancellationException cancellation) {
+				ExecutionStoppedException executionStopped = stopped.get();
+				if (executionStopped != null) {
+					throw executionStopped;
+				}
+				throw cancellation;
+			}
+		}
+
+		@Override
+		public AgentOutcome get(long timeout, TimeUnit unit)
+				throws InterruptedException, ExecutionException, TimeoutException {
+			try {
+				return super.get(timeout, unit);
 			}
 			catch (CancellationException cancellation) {
 				ExecutionStoppedException executionStopped = stopped.get();

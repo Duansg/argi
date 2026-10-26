@@ -86,8 +86,7 @@ public final class GoogleAdkChatClientAdapter implements ChatClient {
 		if (capabilities.multimodal() || !capabilities.async()) {
 			throw new IllegalArgumentException("ADK adapter accepts text/JSON input and always invokes asynchronously");
 		}
-		// ADK 1.11.0 Claude ignores config tools and most generation options, and blocks
-		// its caller.
+		// ADK Claude ignores config tools and most generation options, and blocks its caller.
 		if (model instanceof Claude && (capabilities.streaming() || capabilities.toolCalling()
 				|| capabilities.structuredOutput() || capabilities.cancellation())) {
 			throw new IllegalArgumentException("ADK Claude supports only non-streaming text through this adapter");
